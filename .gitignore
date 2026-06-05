@@ -1,0 +1,26 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ランタイム生成ファイル
+command_log.jsonl
+session_history.jsonl
+macros.json
+
+# 認証情報・秘密情報
+secrets.env
+/etc/robot_nl/
+
+# エディタ
+.vscode/
+.idea/
+*.swp
+
+# pytest
+.pytest_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,45 @@
+robot:
+  namespace: ""
+  cmd_vel_topic: "/cmd_vel"
+  image_topic: "/camera/image_raw"
+  battery_topic: ""
+  battery_low_threshold: 20
+  battery_critical_threshold: 10
+  watchdog_timeout_sec: 5.0
+  max_duration_sec: 30.0
+  max_angle_deg: 360.0
+  ramp_down_enabled: true
+  ramp_down_steps: 5
+  mode: "simulate"              # real / simulate / dry_run
+  compliance_mode: false
+  human_presence_max_speed: 0.25
+  offline_fallback: true
+
+llm:
+  # Gemini (デフォルト): gemini-2.5-flash, gemini-2.5-pro
+  # Claude on Vertex AI (要 Model Garden 有効化): claude-sonnet-4-5@20250514
+  model: "gemini-2.5-flash"
+  model_locked: false
+  project: "your-project-id"
+  location: "us-central1"
+  backend: "vertex_ai"
+  timeout_sec: 60
+  timeout_observe_sec: 10
+  retry_max: 1
+  backoff_base_sec: 1.0
+
+interface:
+  language: "auto"
+  verbosity: "normal"           # brief / normal / verbose
+  feedback_modes:
+    - text
+  camera_send_to_cloud: true
+
+auth:
+  mode: "none"                  # none / single_token / multi_user
+  token: ""
+
+cost_control:
+  daily_command_limit: 500
+  daily_observe_limit: 50
+  alert_threshold_usd: 10.0
