@@ -1,5 +1,8 @@
 # susumu_agent
 
+> [!WARNING]
+> **注意：このリポジトリは生成AIで適当に作ってます。**
+
 自然言語（日本語・英語）でロボットを制御するシステム。  
 Google ADK + Gemini（または Claude on Vertex AI）が音声・テキストの指示を ROS2 `/cmd_vel` コマンドに変換する。
 
