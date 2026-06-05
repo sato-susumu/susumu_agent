@@ -1,96 +1,114 @@
-# robot_nl_controller
+# susumu_agent
 
 自然言語（日本語・英語）でロボットを制御するシステム。  
 Google ADK + Gemini（または Claude on Vertex AI）が音声・テキストの指示を ROS2 `/cmd_vel` コマンドに変換する。
 
 ---
 
-## アーキテクチャ
+## システム全体構成
 
-```
-ユーザー入力（テキスト）
-        │
-        ▼
-┌───────────────────┐
-│      main.py      │  入力ループ・緊急停止判定
-└────────┬──────────┘
-         │ 緊急キーワード → 即時停止（LLM経由しない）
-         │ 通常コマンド ↓
-┌────────▼──────────┐
-│    Google ADK     │  LlmAgent（Gemini 2.5 Flash / Claude on Vertex AI）
-│   + LlmAgent      │  自然言語を解釈してツールを選択・呼び出す
-└────────┬──────────┘
-         │ ツール呼び出し（Function Calling）
-         ▼
-┌─────────────────────────────────────────┐
-│              tools.py（8ツール）         │
-│  move_robot / rotate_robot /            │
-│  execute_sequence / observe /           │
-│  query_status / query_last_command /    │
-│  manage_macro / report_unsupported      │
-└──────┬────────────────────┬────────────┘
-       │                    │
-┌──────▼──────┐    ┌────────▼────────┐
-│ RobotInterface│    │  SharedState    │
-│  (抽象クラス) │    │  スレッドセーフ  │
-└──┬───────┬──┘    │  stop_event     │
-   │       │        │  shutdown_event │
-   ▼       ▼        └────────┬────────┘
-MockRobot  ROS2Robot          │
-(simulate) (/cmd_vel)         │
-                     ┌────────▼────────┐
-                     │    Watchdog     │
-                     │  5秒無通信で停止 │
-                     └─────────────────┘
-```
+```mermaid
+graph TD
+    User["👤 ユーザー入力<br/>（テキスト）"]
+    Emergency["🛑 緊急停止<br/>即時実行<br/>LLM経由なし"]
+    ADK["🤖 Google ADK<br/>LlmAgent<br/>Gemini 2.5 Flash"]
+    Tools["🔧 tools.py<br/>8ツール"]
+    Robot["🦾 RobotInterface"]
+    Mock["💻 MockRobot<br/>simulate モード"]
+    ROS2["🤖 ROS2Robot<br/>/cmd_vel"]
+    State["📊 SharedState<br/>スレッドセーフ"]
+    Watchdog["⏱️ Watchdog<br/>5秒タイムアウト"]
+    Camera["📷 Camera<br/>画像取得"]
+    Macro["💾 MacroStore<br/>macros.json"]
+    Session["📝 SessionStore<br/>JSONL ログ"]
 
-### データフロー（例：「ゆっくり前進」）
-
-```
-1. ユーザー入力: "ゆっくり前進"
-2. 緊急キーワード判定 → 該当なし
-3. ADK LlmAgent が解釈:
-     "ゆっくり" → speed="low"、前進 → direction="forward"
-4. move_robot(direction="forward", speed="low", duration_sec=2.0) を呼び出し
-5. RobotInterface.move() → MockRobot or ROS2Robot
-6. ROS2Robot: /cmd_vel に Twist(linear.x=0.1) をパブリッシュ
-7. 応答: "ロボットは低速で2.0秒前進しました。"
+    User -->|"ストップ等"| Emergency
+    User -->|"通常コマンド"| ADK
+    Emergency --> State
+    ADK -->|"Function Calling"| Tools
+    Tools --> Robot
+    Tools --> State
+    Tools --> Macro
+    Tools --> Session
+    Tools --> Camera
+    Robot --> Mock
+    Robot --> ROS2
+    State --> Watchdog
+    Watchdog -->|"無通信5秒で停止"| State
 ```
 
 ---
 
-## 主要コンポーネント
+## データフロー
 
-| ファイル | 役割 |
-|---|---|
-| `main.py` | エントリポイント。入力ループ、緊急停止、ADK 呼び出し |
-| `agent.py` | Google ADK の `LlmAgent` 設定。モデル・ツール・プロンプト登録 |
-| `tools.py` | 8つのロボット操作ツール。ADK の Function Calling で呼ばれる |
-| `capabilities.py` | 速度定数、入力バリデーション、システムプロンプト自動生成 |
-| `shared_state.py` | プロセス内シングルトン。スレッドセーフな状態管理 |
-| `watchdog.py` | 無通信タイムアウト監視（デフォルト 5 秒で自動停止） |
-| `camera.py` | カメラ画像取得（ROS2 または simulate ダミー） |
-| `session_store.py` | 会話履歴・コマンドログの保存（JSONL） |
-| `macro_store.py` | マクロの登録・保存（macros.json） |
-| `robot/interface.py` | `RobotInterface` 抽象クラス（DI パターン） |
-| `robot/mock_robot.py` | simulate モード用。動作をターミナルに表示 |
-| `robot/ros2_robot.py` | 実機用。`/cmd_vel` に Twist をパブリッシュ |
-| `voice/` | 音声認識・音声合成の抽象基底クラス |
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Main as main.py
+    participant ADK as Google ADK<br/>LlmAgent
+    participant Tools as tools.py
+    participant Robot as RobotInterface
+    participant State as SharedState
 
-### ツール一覧
+    User->>Main: "ゆっくり前進"
+    Main->>Main: 緊急キーワード判定 → 該当なし
+    Main->>ADK: run_async()
+    ADK->>ADK: 自然言語を解釈<br/>"ゆっくり" → speed=low<br/>"前進" → direction=forward
+    ADK->>Tools: move_robot("forward", "low", 2.0)
+    Tools->>State: stop_event 確認
+    Tools->>Robot: move("forward", "low", 2.0)
+    Robot-->>Tools: 完了
+    Tools-->>ADK: {status: ok, linear_x: 0.1, duration_sec: 2.0}
+    ADK-->>Main: "ロボットは低速で2.0秒前進しました。"
+    Main-->>User: 🤖 ロボットは低速で2.0秒前進しました。
+```
 
-| ツール | 説明 | 主なパラメータ |
-|---|---|---|
-| `move_robot` | 前進・後退・停止 | `direction`, `speed`, `duration_sec` |
-| `rotate_robot` | その場旋回 | `angle_deg`（正=左、負=右）, `speed` |
-| `execute_sequence` | 複数動作の連続実行 | `steps`（moveとrotateのリスト） |
-| `observe` | カメラで前方確認 | `question` |
-| `query_status` | 現在の移動状態取得 | なし |
-| `query_last_command` | 直前のコマンド取得 | なし |
-| `manage_macro` | マクロ登録・実行・削除・一覧 | `action`, `name`, `steps` |
-| `report_unsupported` | 能力範囲外の場合に呼ばれる | `reason` |
+---
 
-### 速度マッピング
+## 安全設計
+
+```mermaid
+graph LR
+    Input["ユーザー入力"]
+
+    subgraph "層1: 緊急キーワード検出"
+        EK["ストップ / 止まれ / stop\n→ LLM を経由せず即時停止"]
+    end
+
+    subgraph "層2: Watchdog"
+        WD["最後のコマンドから5秒経過\n→ 自動で zero_twist()"]
+    end
+
+    subgraph "層3: ロボット側安全機構"
+        HW["ハードウェア・ファームウェア\nレベルの安全機能"]
+    end
+
+    Input --> EK
+    EK -->|"stop_event.set()"| WD
+    WD --> HW
+```
+
+---
+
+## ツール一覧
+
+```mermaid
+graph LR
+    ADK["Google ADK<br/>LlmAgent"]
+
+    ADK --> T1["move_robot<br/>前進・後退・停止"]
+    ADK --> T2["rotate_robot<br/>その場旋回"]
+    ADK --> T3["execute_sequence<br/>複数動作の連続実行"]
+    ADK --> T4["observe<br/>カメラで前方確認"]
+    ADK --> T5["query_status<br/>移動状態の確認"]
+    ADK --> T6["query_last_command<br/>直前コマンド取得"]
+    ADK --> T7["manage_macro<br/>マクロ登録・実行・削除"]
+    ADK --> T8["report_unsupported<br/>能力範囲外の報告"]
+```
+
+---
+
+## 速度マッピング
 
 | レベル | キーワード例 | linear (m/s) | angular (rad/s) |
 |---|---|---|---|
@@ -98,21 +116,67 @@ MockRobot  ROS2Robot          │
 | `medium` | （指定なし） | 0.3 | 0.8 |
 | `high` | 速く、fast | 0.5 | 1.5 |
 
-### 安全設計
+---
 
-安全は 3 層構造になっている。
+## モード切り替え
 
+```mermaid
+flowchart TD
+    Start["起動"]
+    Config{"config.yaml<br/>robot.mode"}
+    Simulate["simulate モード<br/>ROS2 不要<br/>MockRobot が動作を表示"]
+    Real["real モード<br/>ROS2 必要<br/>/cmd_vel をパブリッシュ"]
+    DryRun["dry_run モード<br/>LLM だけ動かす<br/>ロボットへの指令なし"]
+    ADK{"Google ADK<br/>利用可能？"}
+    UseADK["ADK + Gemini/Claude<br/>自然言語処理"]
+    RuleBased["ルールベース<br/>（ADK なし）"]
+
+    Start --> Config
+    Config -->|simulate| Simulate
+    Config -->|real| Real
+    Config -->|dry_run| DryRun
+    Simulate --> ADK
+    Real --> ADK
+    DryRun --> ADK
+    ADK -->|Yes| UseADK
+    ADK -->|No| RuleBased
 ```
-層1: 緊急キーワード検出（main.py）
-     「ストップ」「止まれ」「stop」等 → LLM を経由せず即時停止
-     stop_event をセット → 実行中のシーケンスも中断
 
-層2: Watchdog（watchdog.py）
-     最後のコマンドから 5 秒間無通信 → 自動で zero_twist()
-     daemon スレッドで常時監視
+---
 
-層3: 既存の安全機構（ロボット側）
-     ハードウェア・ファームウェアレベルの安全機能はそのまま活用
+## ファイル構成
+
+```mermaid
+graph TD
+    Root["robot_nl_controller/"]
+
+    Root --> main["main.py<br/>エントリポイント・入力ループ"]
+    Root --> agent["agent.py<br/>ADK LlmAgent 設定"]
+    Root --> tools["tools.py<br/>8ツール実装"]
+    Root --> cap["capabilities.py<br/>速度定数・プロンプト生成"]
+    Root --> state["shared_state.py<br/>スレッドセーフ共有状態"]
+    Root --> wd["watchdog.py<br/>タイムアウト監視"]
+    Root --> cam["camera.py<br/>画像取得"]
+    Root --> ss["session_store.py<br/>履歴ログ"]
+    Root --> ms["macro_store.py<br/>マクロ保存"]
+    Root --> cfg["config.yaml<br/>全設定"]
+
+    Root --> robotdir["robot/"]
+    robotdir --> iface["interface.py<br/>抽象クラス"]
+    robotdir --> mock["mock_robot.py<br/>simulate 用"]
+    robotdir --> ros2["ros2_robot.py<br/>実機用"]
+
+    Root --> launch["launch/"]
+    launch --> lreal["robot_nl.launch.py<br/>実機用"]
+    launch --> lsim["robot_nl_simulate.launch.py<br/>simulate 用"]
+
+    Root --> deploy["deploy/"]
+    deploy --> svc["robot-nl.service<br/>systemd unit"]
+    deploy --> inst["install.sh<br/>デプロイスクリプト"]
+
+    Root --> voice["voice/"]
+    voice --> rec["recognizer.py<br/>音声認識 抽象クラス"]
+    voice --> syn["synthesizer.py<br/>音声合成 抽象クラス"]
 ```
 
 ---
@@ -141,13 +205,13 @@ pip install -r requirements.txt
 
 ```yaml
 robot:
-  mode: "simulate"        # simulate（開発用）/ real（実機）/ dry_run
+  mode: "simulate"        # simulate / real / dry_run
 
 llm:
-  model: "gemini-2.5-flash"          # 使用モデル（下記参照）
-  project: "your-gcp-project-id"     # GCP プロジェクト ID
-  location: "us-central1"            # Vertex AI リージョン
-  timeout_sec: 60                    # LLM 応答タイムアウト
+  model: "gemini-2.5-flash"       # 使用モデル（下記参照）
+  project: "your-gcp-project-id"  # GCP プロジェクト ID
+  location: "us-central1"
+  timeout_sec: 60
 
 interface:
   verbosity: "normal"     # brief / normal / verbose
@@ -155,11 +219,11 @@ interface:
 
 **使用できるモデル:**
 
-| モデル文字列 | 説明 | 前提 |
+| モデル文字列 | 説明 | 前提条件 |
 |---|---|---|
 | `gemini-2.5-flash` | Gemini 2.5 Flash（デフォルト） | Vertex AI 有効化のみ |
 | `gemini-2.5-pro` | Gemini 2.5 Pro（高精度） | Vertex AI 有効化のみ |
-| `claude-sonnet-4-5@20250514` | Claude Sonnet（Anthropic） | Model Garden で Claude を有効化 |
+| `claude-sonnet-4-5@20250514` | Claude Sonnet | Vertex AI Model Garden で Claude を有効化 |
 
 ---
 
@@ -191,7 +255,7 @@ ros2 launch robot_nl_controller robot_nl.launch.py config_path:=/path/to/config.
 sudo bash deploy/install.sh
 sudo nano /etc/robot_nl/secrets.env   # GCP 情報を記入
 sudo systemctl start robot-nl
-sudo journalctl -u robot-nl -f        # ログ確認
+sudo journalctl -u robot-nl -f
 ```
 
 ---
@@ -231,18 +295,25 @@ sudo journalctl -u robot-nl -f        # ログ確認
 
 ### マクロ機能
 
-よく使う動作シーケンスを名前で登録して再利用できる。
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Main as main.py
+    participant Tools as manage_macro
+    participant Store as macros.json
 
+    User->>Main: "ゆっくり前進してから右に90度向いて"
+    Main->>Main: 実行
+    User->>Main: "「パトロール」として登録して"
+    Main->>Tools: manage_macro("register", "パトロール", steps)
+    Tools->>Store: 保存
+    Tools-->>Main: "マクロ「パトロール」を登録しました"
+
+    User->>Main: "パトロールして"
+    Main->>Tools: manage_macro("run", "パトロール")
+    Tools->>Store: ステップ読み込み
+    Tools-->>Main: 実行完了
 ```
-あなた: ゆっくり前進してから右に90度向いて
-あなた: 「パトロール」として登録して
-🤖 マクロ「パトロール」を登録しました
-
-あなた: パトロールして     ← 登録した動作を呼び出す
-あなた: マクロ一覧          ← 登録済みマクロを確認
-```
-
-マクロは `macros.json` に保存され、再起動後も維持される。
 
 ---
 
@@ -253,7 +324,7 @@ sudo journalctl -u robot-nl -f        # ログ確認
 ```python
 # 速度の変更
 SPEED_MAP = {
-    "low":    {"linear": 0.05, "angular": 0.2},   # より遅くする
+    "low":    {"linear": 0.05, "angular": 0.2},
     "medium": {"linear": 0.2,  "angular": 0.6},
     "high":   {"linear": 0.4,  "angular": 1.2},
 }
@@ -270,44 +341,7 @@ EMERGENCY_KEYWORDS = {
 ## テスト
 
 ```bash
-# 単体テスト（ROS2 不要）
 ~/.local/bin/pytest tests/unit/ -v
-```
-
----
-
-## ファイル構成
-
-```
-robot_nl_controller/
-├── config.yaml               # 全設定（速度・モデル・モード等）
-├── main.py                   # エントリポイント・入力ループ・緊急停止
-├── agent.py                  # Google ADK LlmAgent 設定
-├── tools.py                  # 8ツール実装（ADK Function Calling）
-├── capabilities.py           # 速度定数・バリデーション・プロンプト生成
-├── shared_state.py           # プロセス内共有状態（スレッドセーフ）
-├── watchdog.py               # 無通信タイムアウト監視
-├── camera.py                 # カメラ画像取得
-├── session_store.py          # セッション・コマンド履歴（JSONL）
-├── macro_store.py            # マクロ登録・管理（macros.json）
-├── robot/
-│   ├── interface.py          # RobotInterface 抽象クラス
-│   ├── ros2_robot.py         # 実機用（/cmd_vel パブリッシュ）
-│   └── mock_robot.py         # simulate 用（ターミナル出力）
-├── launch/
-│   ├── robot_nl.launch.py          # 実機用 ROS2 launch
-│   └── robot_nl_simulate.launch.py # simulate 用 launch
-├── deploy/
-│   ├── robot-nl.service      # systemd unit
-│   ├── secrets.env.example   # 環境変数テンプレート
-│   └── install.sh            # デプロイスクリプト
-├── voice/
-│   ├── recognizer.py         # 音声認識 抽象基底クラス
-│   └── synthesizer.py        # 音声合成 抽象基底クラス
-├── tests/unit/               # 単体テスト（ROS2 不要）
-├── requirements.txt
-├── package.xml               # ROS2 パッケージ定義
-└── setup.py                  # ROS2 ament_python 設定
 ```
 
 ---
@@ -329,33 +363,27 @@ class MyRecognizer(BaseRecognizer):
 
 ## トラブルシューティング
 
-### 「ADK 初期化失敗」と表示される
+### ADK 初期化失敗
 
 1. `pip install google-adk` でパッケージを確認
 2. `config.yaml` の `llm.project` に正しい GCP プロジェクト ID を設定
 3. `gcloud auth application-default login` で認証を確認
 
-### モデルが 404 エラーになる（Claude 使用時）
+### Claude が 404 エラー
 
 Vertex AI Model Garden で Claude の利用を有効化する必要がある。  
 有効化するまでは `config.yaml` の `llm.model` を `gemini-2.5-flash` にする。
 
-### 「タイムアウトしました」と表示される
-
-`config.yaml` の `llm.timeout_sec` を大きくする（デフォルト: `60`）。
-
-### Watchdog が誤作動する（すぐ停止してしまう）
+### Watchdog が誤作動する
 
 `config.yaml` の `robot.watchdog_timeout_sec` を大きくする（デフォルト: `5.0`）。
 
 ### ロボットが動かない（実機モード）
 
 ```bash
-ros2 topic list | grep cmd_vel          # トピックの存在確認
-ros2 topic echo /cmd_vel                # 値が届いているか確認
+ros2 topic list | grep cmd_vel   # トピックの存在確認
+ros2 topic echo /cmd_vel         # 値が届いているか確認
 ```
-
-`config.yaml` の `robot.cmd_vel_topic` がロボット側のトピック名と一致しているか確認する。
 
 ---
 
