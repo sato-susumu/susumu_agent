@@ -1,15 +1,16 @@
 from __future__ import annotations
-import asyncio
-import time
+
 from typing import Literal
 
-from capabilities import (
-    SPEED_MAP, clamp_duration, clamp_angle, angle_to_duration,
-    SpeedLevel, Direction,
+from susumu_agent.capabilities import (
+    SPEED_MAP,
+    angle_to_duration,
+    clamp_angle,
+    clamp_duration,
 )
-from shared_state import get_state
-from macro_store import save_macro, get_macro, delete_macro, list_macros
-from session_store import append_command_log
+from susumu_agent.macro_store import delete_macro, get_macro, list_macros, save_macro
+from susumu_agent.session_store import append_command_log
+from susumu_agent.shared_state import get_state
 
 # ツール実行時に注入される RobotInterface インスタンス
 _robot = None
@@ -124,7 +125,7 @@ async def observe(
         question: カメラ画像について尋ねる質問。
         sensor: 使用するセンサー（現在は camera のみ対応）。
     """
-    from camera import CameraClient
+    from susumu_agent.camera import CameraClient
     # camera クライアントは tools モジュール初期化時に設定
     camera: CameraClient = _camera
     result = camera.get_latest_image()

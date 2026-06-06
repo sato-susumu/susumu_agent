@@ -1,17 +1,30 @@
 from __future__ import annotations
+
+import datetime
 import json
 import time
 from pathlib import Path
 
 SESSION_FILE = Path("session_history.jsonl")
-COMMAND_LOG_FILE = Path("command_log.jsonl")
 MAX_TURNS = 5
 SESSION_TTL_SEC = 86400  # 24時間
 
+# デバッグモード時に set_debug_dir() で上書きされる
+_command_log_path: Path | None = None
+
+
+def set_debug_dir(debug_dir: str) -> None:
+    """デバッグモード時に呼び出してコマンドログの出力先を設定する。"""
+    global _command_log_path
+    ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    _command_log_path = Path(debug_dir) / f"{ts}_command_log.jsonl"
+
 
 def append_command_log(entry: dict) -> None:
+    if _command_log_path is None:
+        return
     entry["ts"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-    with COMMAND_LOG_FILE.open("a", encoding="utf-8") as f:
+    with _command_log_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 

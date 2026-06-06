@@ -1,14 +1,17 @@
 from __future__ import annotations
+
 import asyncio
-from .interface import RobotInterface, Direction, SpeedLevel
-from capabilities import SPEED_MAP, angle_to_duration, clamp_duration, clamp_angle
-from shared_state import get_state
+
+from susumu_agent.capabilities import SPEED_MAP, angle_to_duration, clamp_angle, clamp_duration
+from susumu_agent.shared_state import get_state
+
+from .interface import Direction, RobotInterface, SpeedLevel
 
 try:
-    import rclpy
-    from rclpy.node import Node
+    import rclpy  # noqa: F401
     from geometry_msgs.msg import Twist
-    from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy, HistoryPolicy
+    from rclpy.node import Node
+    from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     ROS2_AVAILABLE = True
 except ImportError:
     ROS2_AVAILABLE = False
@@ -21,12 +24,18 @@ class ROS2Robot(RobotInterface):
         if not ROS2_AVAILABLE:
             raise RuntimeError("rclpy が利用できません。simulate モードを使用してください。")
         qos = QoSProfile(
-            reliability=ReliabilityPolicy.BEST_EFFORT,
+            reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
-            depth=1,
+            depth=10,
         )
         self._pub = node.create_publisher(Twist, cmd_vel_topic, qos)
+
+    def _publish(self, linear_x: float, angular_z: float) -> None:
+        msg = Twist()
+        msg.linear.x = linear_x
+        msg.angular.z = angular_z
+        self._pub.publish(msg)
 
     async def move(self, direction: Direction, speed: SpeedLevel, duration_sec: float) -> None:
         linear = SPEED_MAP[speed]["linear"]
@@ -39,11 +48,18 @@ class ROS2Robot(RobotInterface):
         state = get_state()
 
         if direction == "stop":
+            self._publish(0.0, 0.0)
             state.zero_twist()
             return
 
         state.set_twist(linear, 0.0)
-        await asyncio.sleep(duration_sec)
+        interval = 0.1
+        elapsed = 0.0
+        while elapsed < duration_sec:
+            self._publish(linear, 0.0)
+            await asyncio.sleep(interval)
+            elapsed += interval
+        self._publish(0.0, 0.0)
         state.zero_twist()
 
     async def rotate(self, angle_deg: float, speed: SpeedLevel) -> None:
@@ -55,10 +71,17 @@ class ROS2Robot(RobotInterface):
 
         state = get_state()
         state.set_twist(0.0, angular)
-        await asyncio.sleep(duration_sec)
+        interval = 0.1
+        elapsed = 0.0
+        while elapsed < duration_sec:
+            self._publish(0.0, angular)
+            await asyncio.sleep(interval)
+            elapsed += interval
+        self._publish(0.0, 0.0)
         state.zero_twist()
 
     def stop(self) -> None:
+        self._publish(0.0, 0.0)
         get_state().zero_twist()
 
     def get_status(self) -> dict:

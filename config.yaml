@@ -18,10 +18,10 @@ robot:
 llm:
   # Gemini (デフォルト): gemini-2.5-flash, gemini-2.5-pro
   # Claude on Vertex AI (要 Model Garden 有効化): claude-sonnet-4-5@20250514
-  model: "gemini-2.5-flash"
+  model: "gemini-2.5-flash"    # .env の ROBOT_MODEL で上書き可
   model_locked: false
-  project: "your-project-id"
-  location: "us-central1"
+  project: ""                  # .env の GOOGLE_CLOUD_PROJECT で上書き
+  location: "us-central1"      # .env の GOOGLE_CLOUD_LOCATION で上書き
   backend: "vertex_ai"
   timeout_sec: 60
   timeout_observe_sec: 10

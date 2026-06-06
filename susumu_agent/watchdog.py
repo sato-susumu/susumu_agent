@@ -1,6 +1,10 @@
 from __future__ import annotations
+
 import threading
-from shared_state import get_state
+
+from loguru import logger
+
+from susumu_agent.shared_state import get_state
 
 
 class Watchdog:
@@ -17,6 +21,6 @@ class Watchdog:
         state = get_state()
         while not state.shutdown_event.wait(timeout=1.0):
             if state.is_active and state.get_last_command_age() > self._timeout:
-                print(f"\n  [Watchdog] {self._timeout}秒間コマンドなし → 自動停止")
+                logger.warning(f"[Watchdog] {self._timeout}秒間コマンドなし → 自動停止")
                 state.zero_twist()
                 state.stop_event.set()

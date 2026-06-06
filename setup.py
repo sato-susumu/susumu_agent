@@ -1,13 +1,11 @@
-"""ROS2 パッケージとして使う場合の setup.py。"""
 from setuptools import setup, find_packages
-import os
 from glob import glob
 
-package_name = "robot_nl_controller"
+package_name = "susumu_agent"
 
 setup(
     name=package_name,
-    version="1.0.0",
+    version="0.0.0",
     packages=find_packages(exclude=["tests*"]),
     data_files=[
         ("share/ament_index/resource_index/packages", [f"resource/{package_name}"]),
@@ -17,13 +15,16 @@ setup(
     ],
     install_requires=["setuptools"],
     zip_safe=True,
-    maintainer="your_name",
-    maintainer_email="your_email@example.com",
-    description="自然言語でロボットを制御するシステム（Google ADK + Claude on Vertex AI）",
+    maintainer="Sato Susumu",
+    maintainer_email="75652942+sato-susumu@users.noreply.github.com",
+    description="自然言語でロボットを制御するシステム（Google ADK + Gemini / Claude on Vertex AI）",
     license="MIT",
+    tests_require=["pytest<8.0.0"],
     entry_points={
         "console_scripts": [
-            "robot_nl_main = robot_nl_controller.main:main_entry",
+            "susumu_agent_node = susumu_agent.main:main_entry",
+            "susumu_agent_debug = susumu_agent.debug_tools:main",
+            "susumu_agent_demo = susumu_agent.demo_node:main",
         ],
     },
 )

@@ -1,11 +1,10 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>robot_nl_controller</name>
-  <version>1.0.0</version>
-  <description>自然言語でロボットを制御するシステム（Google ADK + Claude on Vertex AI）</description>
-
-  <maintainer email="your_email@example.com">your_name</maintainer>
+  <name>susumu_agent</name>
+  <version>0.0.0</version>
+  <description>自然言語でロボットを制御するシステム（Google ADK + Gemini / Claude on Vertex AI）</description>
+  <maintainer email="75652942+sato-susumu@users.noreply.github.com">Sato Susumu</maintainer>
   <license>MIT</license>
 
   <depend>rclpy</depend>

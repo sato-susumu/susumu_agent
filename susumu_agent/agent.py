@@ -1,8 +1,10 @@
 from __future__ import annotations
+
 import os
 import warnings
-import yaml
 from pathlib import Path
+
+import yaml
 
 # ADK の実験的機能に関する UserWarning を抑制
 warnings.filterwarnings("ignore", category=UserWarning, module="google.adk")
@@ -25,8 +27,8 @@ try:
 except Exception:
     pass
 
-from capabilities import build_system_prompt
-from tools import ALL_TOOLS
+from susumu_agent.capabilities import build_system_prompt  # noqa: E402
+from susumu_agent.tools import ALL_TOOLS  # noqa: E402
 
 
 def load_config(config_path: str = "config.yaml") -> dict:
@@ -47,11 +49,12 @@ def create_agent(config: dict) -> "LlmAgent":
     if not llm_cfg.get("model_locked", False):
         model = os.environ.get("ROBOT_MODEL", model)
 
-    # Vertex AI 環境変数を設定
-    project = llm_cfg.get("project", "")
+    # Vertex AI 環境変数を設定（.env > config.yaml の優先順位）
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT") or llm_cfg.get("project", "")
     if project:
         os.environ["GOOGLE_CLOUD_PROJECT"] = project
-    os.environ["GOOGLE_CLOUD_LOCATION"] = llm_cfg.get("location", "us-central1")
+    location = os.environ.get("GOOGLE_CLOUD_LOCATION") or llm_cfg.get("location", "us-central1")
+    os.environ["GOOGLE_CLOUD_LOCATION"] = location
     os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
 
     # Claude モデルを指定しているが登録できていない場合は警告

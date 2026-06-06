@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import base64
 import time
 
@@ -23,12 +24,11 @@ class CameraClient:
 
     def _init_ros2(self) -> None:
         try:
-            import rclpy
-            from sensor_msgs.msg import Image
-            from rclpy.node import Node
+            import rclpy  # noqa: F401
+            from rclpy.node import Node  # noqa: F401
+            from sensor_msgs.msg import Image  # noqa: F401
             # 実装時に Node を外部から受け取る形に変更すること
         except ImportError:
-            print("  [Camera] rclpy が利用できません。simulate モードに切り替えます。")
             self._mode = "simulate"
 
     def get_latest_image(self) -> dict:

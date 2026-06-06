@@ -6,6 +6,8 @@
 自然言語（日本語・英語）でロボットを制御するシステム。  
 Google ADK + Gemini（または Claude on Vertex AI）が音声・テキストの指示を ROS2 `/cmd_vel` コマンドに変換する。
 
+![デモ](docs/demo.gif)
+
 ---
 
 ## システム全体構成
@@ -24,6 +26,8 @@ graph TD
     Camera["📷 Camera<br/>画像取得"]
     Macro["💾 MacroStore<br/>macros.json"]
     Session["📝 SessionStore<br/>JSONL ログ"]
+    Logger["📋 loguru<br/>ログ出力"]
+    Debug["🗂️ debug/<br/>ログ・録画・ラベル"]
 
     User -->|"ストップ等"| Emergency
     User -->|"通常コマンド"| ADK
@@ -38,6 +42,7 @@ graph TD
     Robot --> ROS2
     State --> Watchdog
     Watchdog -->|"無通信5秒で停止"| State
+    Logger -->|"デバッグモード"| Debug
 ```
 
 ---
@@ -63,7 +68,7 @@ sequenceDiagram
     Robot-->>Tools: 完了
     Tools-->>ADK: {status: ok, linear_x: 0.1, duration_sec: 2.0}
     ADK-->>Main: "ロボットは低速で2.0秒前進しました。"
-    Main-->>User: 🤖 ロボットは低速で2.0秒前進しました。
+    Main-->>User: ロボットは低速で2.0秒前進しました。
 ```
 
 ---
@@ -147,43 +152,6 @@ flowchart TD
 
 ---
 
-## ファイル構成
-
-```mermaid
-graph TD
-    Root["robot_nl_controller/"]
-
-    Root --> main["main.py<br/>エントリポイント・入力ループ"]
-    Root --> agent["agent.py<br/>ADK LlmAgent 設定"]
-    Root --> tools["tools.py<br/>8ツール実装"]
-    Root --> cap["capabilities.py<br/>速度定数・プロンプト生成"]
-    Root --> state["shared_state.py<br/>スレッドセーフ共有状態"]
-    Root --> wd["watchdog.py<br/>タイムアウト監視"]
-    Root --> cam["camera.py<br/>画像取得"]
-    Root --> ss["session_store.py<br/>履歴ログ"]
-    Root --> ms["macro_store.py<br/>マクロ保存"]
-    Root --> cfg["config.yaml<br/>全設定"]
-
-    Root --> robotdir["robot/"]
-    robotdir --> iface["interface.py<br/>抽象クラス"]
-    robotdir --> mock["mock_robot.py<br/>simulate 用"]
-    robotdir --> ros2["ros2_robot.py<br/>実機用"]
-
-    Root --> launch["launch/"]
-    launch --> lreal["robot_nl.launch.py<br/>実機用"]
-    launch --> lsim["robot_nl_simulate.launch.py<br/>simulate 用"]
-
-    Root --> deploy["deploy/"]
-    deploy --> svc["robot-nl.service<br/>systemd unit"]
-    deploy --> inst["install.sh<br/>デプロイスクリプト"]
-
-    Root --> voice["voice/"]
-    voice --> rec["recognizer.py<br/>音声認識 抽象クラス"]
-    voice --> syn["synthesizer.py<br/>音声合成 抽象クラス"]
-```
-
----
-
 ## セットアップ
 
 ### 前提
@@ -198,11 +166,27 @@ graph TD
 ### インストール
 
 ```bash
-cd robot_nl_controller
-pip install -r requirements.txt
+~/.local/bin/uv sync
 ```
 
-> `rclpy` / `geometry_msgs` / `sensor_msgs` は ROS2 インストールに含まれるため pip 不要。
+> `rclpy` / `geometry_msgs` / `sensor_msgs` は ROS2 インストールに含まれるため pip 不要。  
+> `uv` 未インストールの場合は `curl -LsSf https://astral.sh/uv/install.sh | sh` で導入。
+
+### 認証情報の設定（.env）
+
+プロジェクトルートに `.env` を作成する（`.env.sample` をコピーして編集）:
+
+```bash
+cp .env.sample .env
+```
+
+```dotenv
+GOOGLE_CLOUD_PROJECT=your-gcp-project-id
+GOOGLE_CLOUD_LOCATION=us-central1
+ROBOT_MODEL=gemini-2.5-flash
+```
+
+`.env` は `.gitignore` で除外されているためリポジトリには含まれない。
 
 ### config.yaml の主要設定
 
@@ -211,13 +195,10 @@ robot:
   mode: "simulate"        # simulate / real / dry_run
 
 llm:
-  model: "gemini-2.5-flash"       # 使用モデル（下記参照）
-  project: "your-gcp-project-id"  # GCP プロジェクト ID
+  model: "gemini-2.5-flash"  # .env の ROBOT_MODEL で上書き可
+  project: ""                # .env の GOOGLE_CLOUD_PROJECT で上書き
   location: "us-central1"
   timeout_sec: 60
-
-interface:
-  verbosity: "normal"     # brief / normal / verbose
 ```
 
 **使用できるモデル:**
@@ -235,30 +216,66 @@ interface:
 ### シミュレーションモード（ROS2 不要）
 
 ```bash
-cd robot_nl_controller
-python3 main.py
+python3 -m susumu_agent.main
 ```
 
-### 実機モード（ROS2 必要）
+### launch ファイル一覧
+
+| ファイル | 説明 |
+|---|---|
+| `mock.launch.py` | MockRobot（ROS2 なしでも可） |
+| `mock_debug.launch.py` | MockRobot + デバッグモード |
+| `real.launch.py` | 実機（ROS2 必要） |
+| `real_debug.launch.py` | 実機 + デバッグモード |
+| `turtlesim.launch.py` | turtlesim + インタラクティブ操作 |
+| `turtlesim_debug.launch.py` | turtlesim + インタラクティブ操作 + デバッグモード |
+| `turtlesim_demo.launch.py` | turtlesim + 自動デモ（完了後自動終了） |
+| `turtlesim_demo_debug.launch.py` | turtlesim + 自動デモ + デバッグモード（完了後自動終了） |
 
 ```bash
-# config.yaml の robot.mode を "real" に変更してから:
-python3 main.py
+# MockRobot で起動
+ros2 launch susumu_agent mock.launch.py
 
-# ROS2 launch 経由:
-ros2 launch robot_nl_controller robot_nl.launch.py
+# turtlesim でインタラクティブに操作
+ros2 launch susumu_agent turtlesim.launch.py
 
-# 設定ファイルを指定:
-ros2 launch robot_nl_controller robot_nl.launch.py config_path:=/path/to/config.yaml
+# turtlesim で自動デモ実行（完了後自動終了）
+ros2 launch susumu_agent turtlesim_demo.launch.py
+
+# デバッグモードで自動デモ（ログ・ラベル・録画を debug/ に保存）
+ros2 launch susumu_agent turtlesim_demo_debug.launch.py
 ```
 
-### 自動起動（systemd）
+### デバッグモード
+
+`debug:=true` を付けるか `_debug.launch.py` を使うと以下が `debug/` フォルダに生成される:
+
+| ファイル | 内容 |
+|---|---|
+| `{ts}_susumu_agent.log` | loguru ログ（通常ノード） |
+| `{ts}_susumu_agent_demo.log` | loguru ログ（デモノード） |
+| `{ts}_command_log.jsonl` | ツール呼び出し履歴 |
+| `{ts}_demo_labels.jsonl` | 指示・応答のラベル情報（デモ時のみ） |
+| `{ts}_turtlesim_raw.mp4` | turtlesim 元録画（デモ時のみ） |
+| `{ts}_turtlesim.srt` | 字幕ファイル・日本語＋英語（デモ時のみ） |
+| `{ts}_turtlesim.mp4` | 字幕付き動画（デモ時のみ） |
+| `{ts}_turtlesim.gif` | アニメーション GIF・320px（デモ時のみ） |
 
 ```bash
-sudo bash deploy/install.sh
-sudo nano /etc/robot_nl/secrets.env   # GCP 情報を記入
-sudo systemctl start robot-nl
-sudo journalctl -u robot-nl -f
+# デバッグモードを明示指定
+ros2 launch susumu_agent turtlesim_demo.launch.py debug:=true
+
+# debug_dir を変更
+ros2 launch susumu_agent turtlesim_demo_debug.launch.py debug_dir:=/tmp/mydbg
+```
+
+### LLM なしでツールを直接テスト
+
+```bash
+python3 -m susumu_agent.debug_tools move forward medium 2.0
+python3 -m susumu_agent.debug_tools rotate 90 medium
+python3 -m susumu_agent.debug_tools sequence square
+python3 -m susumu_agent.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel move forward medium 2.0
 ```
 
 ---
@@ -269,11 +286,11 @@ sudo journalctl -u robot-nl -f
 
 ```
 あなた: ゆっくり前進
-  [考え中...]
-  [MockRobot] forward linear_x=0.10 m/s × 2.0s 開始
-  [MockRobot] forward 完了 → 停止
+10:00:01 [INFO] 入力: 'ゆっくり前進'
+10:00:03 [INFO] [MockRobot] forward linear_x=0.10 m/s × 2.0s 開始
+10:00:05 [INFO] 応答: ロボットは低速で2.0秒前進しました。
 
-🤖 ロボットは低速で2.0秒前進しました。
+ロボットは低速で2.0秒前進しました。
 ```
 
 ### コマンド例
@@ -296,33 +313,11 @@ sudo journalctl -u robot-nl -f
 | `ストップ` | 即時緊急停止（LLM 経由なし） |
 | `quit` | 終了 |
 
-### マクロ機能
-
-```mermaid
-sequenceDiagram
-    actor User as ユーザー
-    participant Main as main.py
-    participant Tools as manage_macro
-    participant Store as macros.json
-
-    User->>Main: "ゆっくり前進してから右に90度向いて"
-    Main->>Main: 実行
-    User->>Main: "「パトロール」として登録して"
-    Main->>Tools: manage_macro("register", "パトロール", steps)
-    Tools->>Store: 保存
-    Tools-->>Main: "マクロ「パトロール」を登録しました"
-
-    User->>Main: "パトロールして"
-    Main->>Tools: manage_macro("run", "パトロール")
-    Tools->>Store: ステップ読み込み
-    Tools-->>Main: 実行完了
-```
-
 ---
 
 ## 能力定義のカスタマイズ
 
-`capabilities.py` を編集するとロボットの能力定義を変更できる。変更後はシステムプロンプトに自動で反映される。
+`susumu_agent/capabilities.py` を編集するとロボットの能力定義を変更できる。変更後はシステムプロンプトに自動で反映される。
 
 ```python
 # 速度の変更
@@ -349,17 +344,42 @@ EMERGENCY_KEYWORDS = {
 
 ---
 
-## 音声インターフェースの追加
+## ファイル構成
 
-`voice/` の抽象クラスを継承して実装し、`main.py` の `input()` を差し替える。
-
-```python
-# voice/my_recognizer.py
-from voice.recognizer import BaseRecognizer
-
-class MyRecognizer(BaseRecognizer):
-    async def recognize(self) -> str:
-        return your_stt_api.transcribe()
+```
+susumu_agent/
+├── config.yaml               # 全設定（トピック名・モデル・モード等）
+├── .env                      # 認証情報（gitignore 対象）
+├── .env.sample               # .env のテンプレート
+├── debug/                    # デバッグ出力先（gitignore 対象）
+├── requirements.txt          # pip インストール可能パッケージ
+├── launch/
+│   ├── mock.launch.py
+│   ├── mock_debug.launch.py
+│   ├── real.launch.py
+│   ├── real_debug.launch.py
+│   ├── turtlesim.launch.py
+│   ├── turtlesim_debug.launch.py
+│   ├── turtlesim_demo.launch.py
+│   └── turtlesim_demo_debug.launch.py
+└── susumu_agent/
+    ├── main.py               # 入力ループ・緊急停止・フィードバック表示
+    ├── agent.py              # LlmAgent 定義
+    ├── tools.py              # 8ツール実装
+    ├── capabilities.py       # 速度定数・プロンプト自動生成
+    ├── shared_state.py       # SharedState 集約
+    ├── watchdog.py           # 無通信タイムアウト監視
+    ├── camera.py             # 画像取得
+    ├── session_store.py      # セッション・コマンド履歴 JSONL
+    ├── macro_store.py        # マクロ登録・読み込み
+    ├── demo_node.py          # turtlesim 自動デモノード
+    ├── debug_tools.py        # LLM なしツール直接テスト CLI
+    ├── ros_logger.py         # loguru → ROS2 ロガーブリッジ
+    ├── turtlesim_recorder.py # turtlesim 画面録画（ffmpeg x11grab）
+    └── robot/
+        ├── interface.py      # RobotInterface 抽象クラス
+        ├── ros2_robot.py     # ROS2 実装
+        └── mock_robot.py     # simulate モード用
 ```
 
 ---
@@ -369,13 +389,13 @@ class MyRecognizer(BaseRecognizer):
 ### ADK 初期化失敗
 
 1. `pip install google-adk` でパッケージを確認
-2. `config.yaml` の `llm.project` に正しい GCP プロジェクト ID を設定
+2. `.env` の `GOOGLE_CLOUD_PROJECT` に正しい GCP プロジェクト ID を設定
 3. `gcloud auth application-default login` で認証を確認
 
 ### Claude が 404 エラー
 
 Vertex AI Model Garden で Claude の利用を有効化する必要がある。  
-有効化するまでは `config.yaml` の `llm.model` を `gemini-2.5-flash` にする。
+有効化するまでは `.env` の `ROBOT_MODEL` を `gemini-2.5-flash` にする。
 
 ### Watchdog が誤作動する
 

@@ -7,13 +7,16 @@ build/
 .eggs/
 
 # ランタイム生成ファイル
-command_log.jsonl
 session_history.jsonl
 macros.json
 
 # 認証情報・秘密情報
+.env
 secrets.env
 /etc/robot_nl/
+
+# デバッグ出力
+debug/
 
 # エディタ
 .vscode/

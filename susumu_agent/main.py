@@ -3,23 +3,32 @@
 simulate / dry_run モードでは ROS2 不要で動作確認できる。
 """
 from __future__ import annotations
+
 import asyncio
 import sys
-import yaml
 from pathlib import Path
 
-from capabilities import EMERGENCY_KEYWORDS, build_system_prompt
-from shared_state import get_state
-from watchdog import Watchdog
-from camera import CameraClient
-from robot.mock_robot import MockRobot
-import tools as tools_module
-from session_store import save_turn, append_command_log
+import yaml
+from loguru import logger
+
+try:
+    from dotenv import load_dotenv
+    _DOTENV_AVAILABLE = True
+except ImportError:
+    _DOTENV_AVAILABLE = False
+
+import susumu_agent.tools as tools_module
+from susumu_agent.camera import CameraClient
+from susumu_agent.capabilities import EMERGENCY_KEYWORDS
+from susumu_agent.robot.mock_robot import MockRobot
+from susumu_agent.session_store import save_turn
+from susumu_agent.shared_state import get_state
+from susumu_agent.watchdog import Watchdog
 
 # google-adk が未インストールの場合のフォールバック
 ADK_AVAILABLE = False
 try:
-    from google.adk.agents import LlmAgent
+    from google.adk.agents import LlmAgent  # noqa: F401
     from google.adk.runners import Runner
     from google.adk.sessions import InMemorySessionService
     ADK_AVAILABLE = True
@@ -55,18 +64,26 @@ def is_help(text: str) -> bool:
     return text.strip() in {"ヘルプ", "help", "何ができる", "使い方", "?", "？"}
 
 
-def print_status(text: str, state_label: str = "info") -> None:
+def log_status(text: str, state_label: str = "info") -> None:
     colors = {
         "info":      "\033[0m",
-        "thinking":  "\033[33m",   # 黄
-        "moving":    "\033[32m",   # 緑
-        "stop":      "\033[31;1m", # 赤・太字
-        "error":     "\033[31m",   # 赤
-        "ok":        "\033[32m",   # 緑
+        "thinking":  "\033[33m",
+        "moving":    "\033[32m",
+        "stop":      "\033[31;1m",
+        "error":     "\033[31m",
+        "ok":        "\033[32m",
     }
     reset = "\033[0m"
     color = colors.get(state_label, "")
-    print(f"{color}{text}{reset}")
+    msg = f"{color}{text}{reset}"
+    if state_label == "error":
+        logger.error(text)
+    elif state_label == "stop":
+        logger.warning(text)
+    else:
+        logger.info(text)
+    # ターミナル向けカラー出力（loguru の stdout sink を通さず直接出力）
+    print(msg)
 
 
 async def run_with_adk(agent, user_input: str, session_service, session_id: str) -> str:
@@ -93,13 +110,11 @@ async def run_simulate(user_input: str, config: dict) -> str:
 
     text = user_input.strip()
 
-    # 緊急停止
     if is_emergency(text):
         get_state().stop_event.set()
         tools_module._robot.stop()
         return "停止しました。"
 
-    # 前進系
     speed = "medium"
     if any(w in text for w in ["ゆっくり", "ゆったり", "そろそろ", "ちょっとずつ"]):
         speed = "low"
@@ -129,7 +144,6 @@ async def run_simulate(user_input: str, config: dict) -> str:
         result = await tools_module.move_robot("stop", speed, 0)
         return "停止しました。"
 
-    # 旋回
     if "右" in text and ("向" in text or "旋回" in text or "回転" in text):
         angle_m = re.search(r"(\d+(?:\.\d+)?)\s*度", text)
         angle = -float(angle_m.group(1)) if angle_m else -90.0
@@ -142,7 +156,6 @@ async def run_simulate(user_input: str, config: dict) -> str:
         result = await tools_module.rotate_robot(angle, speed)
         return f"左に{angle:.0f}度旋回しました（{result['duration_sec']} 秒）"
 
-    # シーケンス
     if "三角形" in text:
         steps = []
         for _ in range(3):
@@ -159,29 +172,25 @@ async def run_simulate(user_input: str, config: dict) -> str:
         result = await tools_module.execute_sequence(steps)
         return f"四角形を描きました（{result['completed_steps']}/{result['total']} ステップ完了）"
 
-    # 状態確認
     if any(w in text for w in ["状態", "今何", "動いてる"]):
         result = tools_module.query_status()
         if result["is_active"]:
             return f"移動中です（linear_x={result['linear_x']:.2f} m/s）"
         return "停止中です。"
 
-    # カメラ
     if any(w in text for w in ["見える", "カメラ", "観察", "確認"]):
         result = await tools_module.observe(text)
         if result["status"] == "ok":
             return f"カメラ画像を取得しました。{result.get('note', '')}（simulate モードではダミー画像です）"
         return f"カメラエラー: {result.get('reason', '不明')}"
 
-    # マクロ
     if "登録" in text and ("動き" in text or "マクロ" in text):
         last = tools_module.query_last_command()
         if last["status"] == "none":
             return "登録できるコマンドがありません。先に何か動かしてください。"
         name_m = re.search(r"[「『](.+?)[」』]", text)
         name = name_m.group(1) if name_m else "マクロ1"
-        result = await tools_module.manage_macro("register", name,
-                                                  [last["last_command"]])
+        result = await tools_module.manage_macro("register", name, [last["last_command"]])
         return result["message"]
 
     if "一覧" in text or "マクロ" in text:
@@ -192,28 +201,42 @@ async def run_simulate(user_input: str, config: dict) -> str:
     return "申し訳ありませんが、その指示には対応していません。「ヘルプ」で使い方を確認できます。"
 
 
-# simulate モード用の速度参照（tools.py の SPEED_MAP を参照）
+# simulate モード用の速度参照
 tools_module._SPEED_MAP_REF = {
     "low": 0.1, "medium": 0.3, "high": 0.5
 }
 
 
 async def main() -> None:
-    config_path = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+    args = sys.argv[1:]
+    config_path = next((a for a in args if not a.startswith("--")), "config.yaml")
     config = load_config(config_path)
+
+    for arg in args:
+        if arg.startswith("--robot-mode="):
+            config.setdefault("robot", {})["mode"] = arg.split("=", 1)[1]
 
     robot_cfg = config.get("robot", {})
     mode = robot_cfg.get("mode", "simulate")
     dry_run = (mode == "dry_run")
 
-    # ロボットバックエンドを設定
+    ros_node = None
     if mode == "real":
-        from robot.ros2_robot import ROS2_AVAILABLE
-        if not ROS2_AVAILABLE:
-            print("ROS2 が利用できません。simulate モードに切り替えます。")
-            mode = "simulate"
+        from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE
+        if ROS2_AVAILABLE:
+            import rclpy
 
-    robot = MockRobot(dry_run=dry_run)
+            from susumu_agent.robot.ros2_robot import ROS2Robot
+            if not rclpy.ok():
+                rclpy.init()
+            ros_node = rclpy.create_node("susumu_agent_robot")
+            robot = ROS2Robot(ros_node, robot_cfg.get("cmd_vel_topic", "/cmd_vel"))
+        else:
+            logger.warning("ROS2 が利用できません。simulate モードに切り替えます。")
+            mode = "simulate"
+            robot = MockRobot(dry_run=dry_run)
+    else:
+        robot = MockRobot(dry_run=dry_run)
     tools_module.set_robot(robot)
 
     camera = CameraClient(
@@ -222,34 +245,31 @@ async def main() -> None:
     )
     tools_module.set_camera(camera)
 
-    # Watchdog 起動
     watchdog = Watchdog(timeout_sec=robot_cfg.get("watchdog_timeout_sec", 5.0))
     watchdog.start()
 
-    # ADK エージェント準備
     agent = None
     session_service = None
     session_id = "session_001"
-    # simulate モードでも ADK が使える（MockRobot にツールを向けているため）
     use_adk = ADK_AVAILABLE
 
     if use_adk:
         try:
-            from agent import create_agent
+            from susumu_agent.agent import create_agent
             agent = create_agent(config)
             session_service = InMemorySessionService()
             await session_service.create_session(
                 app_name="robot_nl", user_id="operator", session_id=session_id
             )
-            print_status(f"ADK エージェント起動（モデル: {config['llm']['model']}）", "ok")
+            logger.info(f"ADK エージェント起動（モデル: {config['llm']['model']}）")
         except Exception as e:
-            print_status(f"ADK 初期化失敗: {e}\nシミュレーションモードで起動します。", "error")
+            logger.error(f"ADK 初期化失敗: {e}\nシミュレーションモードで起動します。")
             use_adk = False
 
     mode_label = {"real": "実機", "simulate": "シミュレーション", "dry_run": "ドライラン"}.get(mode, mode)
     model_name = config.get("llm", {}).get("model", "不明") if use_adk else "—"
     print(WELCOME_MSG)
-    print_status(f"モード: {mode_label} | LLM: {'ADK (' + model_name + ')' if use_adk else 'ルールベース（ADK なし）'}", "info")
+    logger.info(f"モード: {mode_label} | LLM: {'ADK (' + model_name + ')' if use_adk else 'ルールベース（ADK なし）'}")
     print()
 
     state = get_state()
@@ -270,17 +290,18 @@ async def main() -> None:
                 print(WELCOME_MSG)
                 continue
 
-            # 緊急停止は最優先でLLMを経由しない
             if is_emergency(user_input):
                 state.stop_event.set()
                 robot.stop()
-                print_status("  [停止!] 緊急停止しました。", "stop")
+                logger.warning("緊急停止しました。")
                 save_turn("user", user_input)
                 save_turn("assistant", "停止しました。")
-                print_status("\n🤖 停止しました。\n", "ok")
+                print("\033[31;1m  [停止!] 緊急停止しました。\033[0m")
+                print("\033[32m\n停止しました。\n\033[0m")
                 continue
 
-            print_status("  [考え中...]", "thinking")
+            logger.info(f"入力: {user_input!r}")
+            print("\033[33m  [考え中...]\033[0m")
             save_turn("user", user_input)
 
             try:
@@ -293,27 +314,87 @@ async def main() -> None:
                     response = await run_simulate(user_input, config)
             except asyncio.TimeoutError:
                 response = "タイムアウトしました。もう一度お試しください。"
-                print_status(f"  [エラー] {response}", "error")
+                logger.error(response)
             except Exception as e:
                 response = f"エラーが発生しました: {e}"
-                print_status(f"  [エラー] {response}", "error")
+                logger.error(response)
 
             save_turn("assistant", response)
-            print_status(f"\n🤖 {response}\n", "ok")
+            logger.info(f"応答: {response}")
+            print(f"\033[32m\n{response}\n\033[0m")
 
     except KeyboardInterrupt:
         pass
     finally:
-        print_status("\n終了します...", "info")
+        logger.info("終了します...")
         state.shutdown_event.set()
         state.stop_event.set()
         robot.stop()
+        if ros_node is not None:
+            ros_node.destroy_node()
+            import rclpy
+            if rclpy.ok():
+                rclpy.shutdown()
 
 
 def main_entry():
     """ROS2 console_scripts エントリポイント。"""
+    try:
+        import rclpy
+        rclpy.init()
+        node = rclpy.create_node("susumu_agent_node")
+        node.declare_parameter("config_path", "")
+        node.declare_parameter("robot_mode", "")
+        node.declare_parameter("env_file", "")
+        node.declare_parameter("debug", "false")
+        node.declare_parameter("debug_dir", "debug")
+        config_path = node.get_parameter("config_path").value or None
+        robot_mode = node.get_parameter("robot_mode").value or None
+        env_file = node.get_parameter("env_file").value or None
+        _debug_raw = node.get_parameter("debug").value
+        debug = _debug_raw if isinstance(_debug_raw, bool) else str(_debug_raw).lower() == "true"
+        debug_dir = node.get_parameter("debug_dir").value or "debug"
+        node.destroy_node()
+        rclpy.shutdown()
+    except Exception:
+        config_path = None
+        robot_mode = None
+        env_file = None
+        debug = False
+        debug_dir = "debug"
+
+    if _DOTENV_AVAILABLE and env_file:
+        load_dotenv(env_file, override=True)
+    elif _DOTENV_AVAILABLE:
+        load_dotenv(override=False)
+
+    if debug:
+        import datetime
+
+        from susumu_agent.ros_logger import setup_loguru
+        from susumu_agent.session_store import set_debug_dir
+        Path(debug_dir).mkdir(parents=True, exist_ok=True)
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        log_path = str(Path(debug_dir) / f"{ts}_susumu_agent.log")
+        setup_loguru(log_path)
+        set_debug_dir(debug_dir)
+    else:
+        # デフォルト: stdout のみ
+        logger.remove()
+        logger.add(sys.stderr, format="{time:HH:mm:ss} [{level}] {message}")
+
+    new_argv = [sys.argv[0]]
+    if config_path:
+        new_argv.append(config_path)
+    if robot_mode:
+        new_argv.append(f"--robot-mode={robot_mode}")
+    sys.argv = new_argv
     asyncio.run(main())
 
 
 if __name__ == "__main__":
+    if _DOTENV_AVAILABLE:
+        load_dotenv(override=False)
+    logger.remove()
+    logger.add(sys.stderr, format="{time:HH:mm:ss} [{level}] {message}")
     asyncio.run(main())

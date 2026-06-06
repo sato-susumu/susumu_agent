@@ -1,9 +1,6 @@
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../.."))
-
 import math
 import pytest
-from capabilities import (
+from susumu_agent.capabilities import (
     SPEED_MAP, clamp_duration, clamp_angle,
     angle_to_duration, MAX_DURATION_SEC, MAX_ANGLE_DEG,
 )
