@@ -4,6 +4,212 @@
 
 ---
 
+## システム全体構成
+
+```mermaid
+graph TD
+    User["👤 ユーザー入力<br/>（テキスト）"]
+    Emergency["🛑 緊急停止<br/>即時実行<br/>LLM経由なし"]
+    ADK["🤖 Google ADK<br/>LlmAgent<br/>Gemini 2.5 Flash"]
+    Tools["🔧 tools.py<br/>8ツール"]
+    Robot["🦾 RobotInterface"]
+    Mock["💻 MockRobot<br/>simulate モード"]
+    ROS2["🤖 ROS2Robot<br/>/cmd_vel"]
+    State["📊 SharedState<br/>スレッドセーフ"]
+    Watchdog["⏱️ Watchdog<br/>5秒タイムアウト"]
+    Camera["📷 Camera<br/>画像取得"]
+    Macro["💾 MacroStore<br/>macros.json"]
+    Session["📝 SessionStore<br/>JSONL ログ"]
+    Logger["📋 loguru<br/>ログ出力"]
+    Debug["🗂️ debug/<br/>ログ・録画・ラベル"]
+
+    User -->|"ストップ等"| Emergency
+    User -->|"通常コマンド"| ADK
+    Emergency --> State
+    ADK -->|"Function Calling"| Tools
+    Tools --> Robot
+    Tools --> State
+    Tools --> Macro
+    Tools --> Session
+    Tools --> Camera
+    Robot --> Mock
+    Robot --> ROS2
+    State --> Watchdog
+    Watchdog -->|"無通信5秒で停止"| State
+    Logger -->|"デバッグモード"| Debug
+```
+
+---
+
+## データフロー
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant Main as main.py
+    participant ADK as Google ADK<br/>LlmAgent
+    participant Tools as tools.py
+    participant Robot as RobotInterface
+    participant State as SharedState
+
+    User->>Main: "ゆっくり前進"
+    Main->>Main: 緊急キーワード判定 → 該当なし
+    Main->>ADK: run_async()
+    ADK->>ADK: 自然言語を解釈<br/>"ゆっくり" → speed=low<br/>"前進" → direction=forward
+    ADK->>Tools: move_robot("forward", "low", 2.0)
+    Tools->>State: stop_event 確認
+    Tools->>Robot: move("forward", "low", 2.0)
+    Robot-->>Tools: 完了
+    Tools-->>ADK: {status: ok, linear_x: 0.1, duration_sec: 2.0}
+    ADK-->>Main: "ロボットは低速で2.0秒前進しました。"
+    Main-->>User: ロボットは低速で2.0秒前進しました。
+```
+
+---
+
+## 安全設計
+
+```mermaid
+graph LR
+    Input["ユーザー入力"]
+
+    subgraph "層1: 緊急キーワード検出"
+        EK["ストップ / 止まれ / stop\n→ LLM を経由せず即時停止"]
+    end
+
+    subgraph "層2: Watchdog"
+        WD["最後のコマンドから5秒経過\n→ 自動で zero_twist()"]
+    end
+
+    subgraph "層3: ロボット側安全機構"
+        HW["ハードウェア・ファームウェア\nレベルの安全機能"]
+    end
+
+    Input --> EK
+    EK -->|"stop_event.set()"| WD
+    WD --> HW
+```
+
+---
+
+## ツール一覧
+
+```mermaid
+graph LR
+    ADK["Google ADK<br/>LlmAgent"]
+
+    ADK --> T1["move_robot<br/>前進・後退・停止"]
+    ADK --> T2["rotate_robot<br/>その場旋回"]
+    ADK --> T3["execute_sequence<br/>複数動作の連続実行"]
+    ADK --> T4["observe<br/>カメラで前方確認"]
+    ADK --> T5["query_status<br/>移動状態の確認"]
+    ADK --> T6["query_last_command<br/>直前コマンド取得"]
+    ADK --> T7["manage_macro<br/>マクロ登録・実行・削除"]
+    ADK --> T8["report_unsupported<br/>能力範囲外の報告"]
+```
+
+---
+
+## 速度マッピング
+
+| レベル | キーワード例 | linear (m/s) | angular (rad/s) |
+|---|---|---|---|
+| `low` | ゆっくり、slowly | 0.1 | 0.3 |
+| `medium` | （指定なし） | 0.3 | 0.8 |
+| `high` | 速く、fast | 0.5 | 1.5 |
+
+---
+
+## LLM なしでツールを直接テスト
+
+```bash
+python3 -m susumu_agent.debug_tools move forward medium 2.0
+python3 -m susumu_agent.debug_tools rotate 90 medium
+python3 -m susumu_agent.debug_tools sequence square
+python3 -m susumu_agent.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel move forward medium 2.0
+```
+
+---
+
+## シミュレーションモード（ROS2 不要）
+
+ROS2 なしで動作確認できる。
+
+```bash
+python3 -m susumu_agent.main
+```
+
+---
+
+## デバッグモード
+
+`_debug.launch.py` を使うと以下が `debug/` フォルダに生成される:
+
+| ファイル | 内容 |
+|---|---|
+| `{ts}_susumu_agent.log` | loguru ログ（通常ノード） |
+| `{ts}_susumu_agent_demo.log` | loguru ログ（デモノード） |
+| `{ts}_command_log.jsonl` | ツール呼び出し履歴 |
+| `{ts}_demo_labels.jsonl` | 指示・応答のラベル情報（デモ時のみ） |
+| `{ts}_turtlesim_raw.mp4` | turtlesim 元録画（デモ時のみ） |
+| `{ts}_turtlesim.srt` | 字幕ファイル・日本語＋英語（デモ時のみ） |
+| `{ts}_turtlesim.mp4` | 字幕付き動画（デモ時のみ） |
+| `{ts}_turtlesim.gif` | アニメーション GIF・320px（デモ時のみ） |
+
+```bash
+# debug_dir を変更
+ros2 launch susumu_agent turtlesim_demo_debug.launch.py debug_dir:=/tmp/mydbg
+```
+
+---
+
+## モード切り替え
+
+```mermaid
+flowchart TD
+    Start["起動"]
+    Config{"config.yaml<br/>robot.mode"}
+    Simulate["simulate モード<br/>ROS2 不要<br/>MockRobot が動作を表示"]
+    Real["real モード<br/>ROS2 必要<br/>/cmd_vel をパブリッシュ"]
+    DryRun["dry_run モード<br/>LLM だけ動かす<br/>ロボットへの指令なし"]
+    ADK{"Google ADK<br/>利用可能？"}
+    UseADK["ADK + Gemini/Claude<br/>自然言語処理"]
+    RuleBased["ルールベース<br/>（ADK なし）"]
+
+    Start --> Config
+    Config -->|simulate| Simulate
+    Config -->|real| Real
+    Config -->|dry_run| DryRun
+    Simulate --> ADK
+    Real --> ADK
+    DryRun --> ADK
+    ADK -->|Yes| UseADK
+    ADK -->|No| RuleBased
+```
+
+---
+
+## 能力定義のカスタマイズ
+
+`susumu_agent/capabilities.py` を編集するとロボットの能力定義を変更できる。変更後はシステムプロンプトに自動で反映される。
+
+```python
+# 速度の変更
+SPEED_MAP = {
+    "low":    {"linear": 0.05, "angular": 0.2},
+    "medium": {"linear": 0.2,  "angular": 0.6},
+    "high":   {"linear": 0.4,  "angular": 1.2},
+}
+
+# 緊急停止キーワードの追加
+EMERGENCY_KEYWORDS = {
+    "ストップ", "止まれ", "stop",
+    "危ない",   # 追加例
+}
+```
+
+---
+
 ## 1. システム概要
 
 自然言語（日本語）でロボットを制御するシステム。

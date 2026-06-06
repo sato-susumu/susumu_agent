@@ -12,13 +12,13 @@ python3 -m susumu_agent.main
 python3 -m susumu_agent.main /path/to/config.yaml
 
 # 単体テスト実行
-~/.local/bin/pytest tests/unit/ -v
+pytest
 
 # 単一テスト実行
-~/.local/bin/pytest tests/unit/test_capabilities.py::test_speed_map_values -v
+pytest tests/test_capabilities.py::test_speed_map_values -v
 
 # パッケージインストール（uv を使用）
-~/.local/bin/uv sync
+uv sync
 # ※ rclpy / geometry_msgs / sensor_msgs は ROS2 付属のため pip 不可
 
 # ROS2 ビルド

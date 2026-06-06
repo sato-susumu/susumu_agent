@@ -17,108 +17,123 @@ import asyncio
 import sys
 
 
-def _setup_robot(real: bool, cmd_vel_topic: str):
-    if real:
-        from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE, ROS2Robot
-        if not ROS2_AVAILABLE:
-            print("[ERROR] rclpy が利用できません。--real を外してください。")
-            sys.exit(1)
-        import rclpy
-        if not rclpy.ok():
-            rclpy.init()
-        node = rclpy.create_node("susumu_agent_debug")
-        robot = ROS2Robot(node, cmd_vel_topic)
-        return robot, node
-    else:
-        from susumu_agent.robot.mock_robot import MockRobot
-        return MockRobot(), None
+class DebugRunner:
+    def __init__(self, args: list[str]) -> None:
+        self._args = list(args)
+        self._real = False
+        self._cmd_vel_topic = "/cmd_vel"
+        self._ros_node = None
 
+    def _parse_flags(self) -> None:
+        if "--real" in self._args:
+            self._real = True
+            self._args.remove("--real")
+        if "--cmd-vel-topic" in self._args:
+            idx = self._args.index("--cmd-vel-topic")
+            self._cmd_vel_topic = self._args[idx + 1]
+            self._args.pop(idx)
+            self._args.pop(idx)
 
-async def _run(args: list[str]) -> None:
-    real = "--real" in args
-    if real:
-        args.remove("--real")
-
-    cmd_vel_topic = "/cmd_vel"
-    if "--cmd-vel-topic" in args:
-        idx = args.index("--cmd-vel-topic")
-        cmd_vel_topic = args[idx + 1]
-        args.pop(idx)
-        args.pop(idx)
-
-    import susumu_agent.tools as tools_module
-    from susumu_agent.camera import CameraClient
-
-    robot, ros_node = _setup_robot(real, cmd_vel_topic)
-    tools_module.set_robot(robot)
-    tools_module.set_camera(CameraClient(mode="simulate"))
-
-    if not args:
-        print(__doc__)
-        return
-
-    cmd = args[0]
-
-    try:
-        if cmd == "move":
-            direction = args[1] if len(args) > 1 else "forward"
-            speed = args[2] if len(args) > 2 else "medium"
-            duration = float(args[3]) if len(args) > 3 else 2.0
-            print(f"[debug] move_robot({direction!r}, {speed!r}, {duration})")
-            result = await tools_module.move_robot(direction, speed, duration)
-            print(f"[result] {result}")
-
-        elif cmd == "rotate":
-            angle = float(args[1]) if len(args) > 1 else 90.0
-            speed = args[2] if len(args) > 2 else "medium"
-            print(f"[debug] rotate_robot({angle}, {speed!r})")
-            result = await tools_module.rotate_robot(angle, speed)
-            print(f"[result] {result}")
-
-        elif cmd == "stop":
-            print("[debug] move_robot('stop', 'medium', 0)")
-            result = await tools_module.move_robot("stop", "medium", 0)
-            print(f"[result] {result}")
-
-        elif cmd == "status":
-            result = tools_module.query_status()
-            print(f"[result] {result}")
-
-        elif cmd == "sequence":
-            shape = args[1] if len(args) > 1 else "triangle"
-            speed = args[2] if len(args) > 2 else "medium"
-            if shape == "triangle":
-                steps = []
-                for _ in range(3):
-                    steps.append({"type": "move", "direction": "forward", "speed": speed, "duration_sec": 2.0})
-                    steps.append({"type": "rotate", "angle_deg": -120, "speed": speed})
-            elif shape == "square":
-                steps = []
-                for _ in range(4):
-                    steps.append({"type": "move", "direction": "forward", "speed": speed, "duration_sec": 2.0})
-                    steps.append({"type": "rotate", "angle_deg": -90, "speed": speed})
-            else:
-                print(f"[ERROR] 不明な shape: {shape}。triangle / square を指定してください。")
-                return
-            print(f"[debug] execute_sequence({shape}, {len(steps)} steps)")
-            result = await tools_module.execute_sequence(steps)
-            print(f"[result] {result}")
-
+    def _setup_robot(self):
+        if self._real:
+            from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE, ROS2Robot
+            if not ROS2_AVAILABLE:
+                print("[ERROR] rclpy が利用できません。--real を外してください。")
+                sys.exit(1)
+            import rclpy
+            if not rclpy.ok():
+                rclpy.init()
+            self._ros_node = rclpy.create_node("susumu_agent_debug")
+            return ROS2Robot(self._ros_node, self._cmd_vel_topic)
         else:
-            print(f"[ERROR] 不明なコマンド: {cmd}")
-            print(__doc__)
+            from susumu_agent.robot.mock_robot import MockRobot
+            return MockRobot()
 
-    finally:
-        if ros_node is not None:
-            ros_node.destroy_node()
+    def _teardown(self) -> None:
+        if self._ros_node is not None:
+            self._ros_node.destroy_node()
             import rclpy
             if rclpy.ok():
                 rclpy.shutdown()
 
+    async def run(self) -> None:
+        self._parse_flags()
+
+        from susumu_agent.camera import CameraClient
+        from susumu_agent.macro_store import MacroStore
+        from susumu_agent.session_store import SessionStore
+        from susumu_agent.tools import RobotTools
+
+        robot = self._setup_robot()
+        tools = RobotTools(
+            robot=robot,
+            camera=CameraClient(mode="simulate"),
+            session_store=SessionStore(),
+            macro_store=MacroStore(),
+        )
+
+        if not self._args:
+            print(__doc__)
+            self._teardown()
+            return
+
+        cmd = self._args[0]
+        try:
+            if cmd == "move":
+                direction = self._args[1] if len(self._args) > 1 else "forward"
+                speed = self._args[2] if len(self._args) > 2 else "medium"
+                duration = float(self._args[3]) if len(self._args) > 3 else 2.0
+                print(f"[debug] move_robot({direction!r}, {speed!r}, {duration})")
+                result = await tools.move_robot(direction, speed, duration)
+                print(f"[result] {result}")
+
+            elif cmd == "rotate":
+                angle = float(self._args[1]) if len(self._args) > 1 else 90.0
+                speed = self._args[2] if len(self._args) > 2 else "medium"
+                print(f"[debug] rotate_robot({angle}, {speed!r})")
+                result = await tools.rotate_robot(angle, speed)
+                print(f"[result] {result}")
+
+            elif cmd == "stop":
+                print("[debug] move_robot('stop', 'medium', 0)")
+                result = await tools.move_robot("stop", "medium", 0)
+                print(f"[result] {result}")
+
+            elif cmd == "status":
+                result = tools.query_status()
+                print(f"[result] {result}")
+
+            elif cmd == "sequence":
+                shape = self._args[1] if len(self._args) > 1 else "triangle"
+                speed = self._args[2] if len(self._args) > 2 else "medium"
+                if shape == "triangle":
+                    steps = []
+                    for _ in range(3):
+                        steps.append({"type": "move", "direction": "forward", "speed": speed, "duration_sec": 2.0})
+                        steps.append({"type": "rotate", "angle_deg": -120, "speed": speed})
+                elif shape == "square":
+                    steps = []
+                    for _ in range(4):
+                        steps.append({"type": "move", "direction": "forward", "speed": speed, "duration_sec": 2.0})
+                        steps.append({"type": "rotate", "angle_deg": -90, "speed": speed})
+                else:
+                    print(f"[ERROR] 不明な shape: {shape}。triangle / square を指定してください。")
+                    self._teardown()
+                    return
+                print(f"[debug] execute_sequence({shape}, {len(steps)} steps)")
+                result = await tools.execute_sequence(steps)
+                print(f"[result] {result}")
+
+            else:
+                print(f"[ERROR] 不明なコマンド: {cmd}")
+                print(__doc__)
+
+        finally:
+            self._teardown()
+
 
 def main():
-    args = sys.argv[1:]
-    asyncio.run(_run(args))
+    asyncio.run(DebugRunner(sys.argv[1:]).run())
 
 
 if __name__ == "__main__":
