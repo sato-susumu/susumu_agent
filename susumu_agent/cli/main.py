@@ -15,17 +15,17 @@ import click
 import yaml
 from loguru import logger
 
-from susumu_agent.agent import AgentFactory
-from susumu_agent.camera import CameraClient
-from susumu_agent.capabilities import EMERGENCY_KEYWORDS
-from susumu_agent.macro_store import MacroStore
+from susumu_agent.agent.factory import AgentFactory
+from susumu_agent.sensors.camera import CameraClient
+from susumu_agent.business.capabilities import EMERGENCY_KEYWORDS
+from susumu_agent.storage.macro_store import MacroStore
 from susumu_agent.robot.mock_robot import MockRobot
 from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE
-from susumu_agent.ros_logger import setup_loguru
-from susumu_agent.session_store import SessionStore
-from susumu_agent.shared_state import get_state
-from susumu_agent.tools import RobotTools
-from susumu_agent.watchdog import Watchdog
+from susumu_agent.logging.ros_logger import setup_loguru
+from susumu_agent.storage.session_store import SessionStore
+from susumu_agent.business.shared_state import get_state
+from susumu_agent.agent.tools import RobotTools
+from susumu_agent.business.watchdog import Watchdog
 
 try:
     from dotenv import load_dotenv

@@ -24,7 +24,7 @@ try:
 except ImportError:
     pass
 
-from susumu_agent.capabilities import build_system_prompt  # noqa: E402
+from susumu_agent.agent.prompt import build_system_prompt  # noqa: E402
 
 
 def _make_image_inject_callback(tools):

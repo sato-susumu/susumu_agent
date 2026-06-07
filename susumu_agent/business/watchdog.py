@@ -4,7 +4,7 @@ import threading
 
 from loguru import logger
 
-from susumu_agent.shared_state import get_state
+from susumu_agent.business.shared_state import get_state
 
 
 class Watchdog:

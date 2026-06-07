@@ -65,11 +65,27 @@ source install/setup.bash
 
 ```bash
 # シミュレーションモード（ROS2 不要）
-python3 -m susumu_agent.main
+python3 -m susumu_agent
 
 # turtlesim デモ（ROS2 必要）
 ros2 launch susumu_agent turtlesim_demo.launch.py
 ```
+
+---
+
+## ROS2 トピック
+
+### サブスクライブ（入力）
+
+| トピック | 型 | 説明 |
+|---|---|---|
+| `/camera/image_raw` | `sensor_msgs/Image` | カメラ画像 |
+
+### パブリッシュ（出力）
+
+| トピック | 型 | 説明 |
+|---|---|---|
+| `/cmd_vel` | `geometry_msgs/Twist` | ロボットへの速度指令 |
 
 ---
 

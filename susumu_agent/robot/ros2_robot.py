@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import asyncio
 
-from susumu_agent.capabilities import SPEED_MAP, angle_to_duration, clamp_angle, clamp_duration
-from susumu_agent.shared_state import get_state
+from susumu_agent.business.capabilities import SPEED_MAP, angle_to_duration, clamp_angle, clamp_duration
+from susumu_agent.business.shared_state import get_state
 
 from .interface import Direction, RobotInterface, SpeedLevel
 

@@ -22,9 +22,9 @@ setup(
     tests_require=["pytest<8.0.0"],
     entry_points={
         "console_scripts": [
-            "susumu_agent_node = susumu_agent.main:main_entry",
-            "susumu_agent_debug = susumu_agent.debug_tools:main",
-            "susumu_agent_demo = susumu_agent.demo_node:main",
+            "susumu_agent_node = susumu_agent.cli.main:main_entry",
+            "susumu_agent_debug = susumu_agent.cli.debug_tools:main",
+            "susumu_agent_demo = susumu_agent.demo.demo_node:main",
         ],
     },
 )

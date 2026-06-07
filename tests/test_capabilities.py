@@ -1,6 +1,6 @@
 import math
 import pytest
-from susumu_agent.capabilities import (
+from susumu_agent.business.capabilities import (
     SPEED_MAP, clamp_duration, clamp_angle,
     angle_to_duration, MAX_DURATION_SEC, MAX_ANGLE_DEG,
 )

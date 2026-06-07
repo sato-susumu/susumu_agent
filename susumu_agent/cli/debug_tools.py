@@ -7,12 +7,12 @@ import sys
 import click
 from loguru import logger
 
-from susumu_agent.camera import CameraClient
-from susumu_agent.macro_store import MacroStore
+from susumu_agent.sensors.camera import CameraClient
+from susumu_agent.storage.macro_store import MacroStore
 from susumu_agent.robot.mock_robot import MockRobot
 from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE, ROS2Robot
-from susumu_agent.session_store import SessionStore
-from susumu_agent.tools import RobotTools
+from susumu_agent.storage.session_store import SessionStore
+from susumu_agent.agent.tools import RobotTools
 
 
 class DebugRunner:

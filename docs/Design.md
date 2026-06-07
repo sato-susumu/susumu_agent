@@ -307,21 +307,23 @@ graph TD
 
 | コンポーネント | ファイル | 責務 |
 |---|---|---|
-| エントリポイント | `main.py` | 入力ループ・緊急停止検出・ADK Runner 起動 |
-| ADK エージェント | `agent.py` | LlmAgent 定義・モデル設定 |
-| ツール実装 | `tools.py` | 8ツール（RobotTools クラス） |
-| 能力・定数定義 | `capabilities.py` | 速度定数・プロンプト自動生成（RobotCapabilities クラス） |
-| 共有状態 | `shared_state.py` | SharedState シングルトン・スレッド安全な状態管理 |
-| Watchdog | `watchdog.py` | 無通信タイムアウト監視・自動停止 |
-| カメラ | `camera.py` | Image Subscriber・base64変換・鮮度チェック |
-| セッション管理 | `session_store.py` | セッション履歴・コマンドログ JSONL |
-| マクロ管理 | `macro_store.py` | マクロ登録・読み込み（macros.json） |
-| ROS2 ロガーブリッジ | `ros_logger.py` | loguru → rclpy.logging（RosLogger クラス） |
+| エントリポイント | `cli/main.py` | 入力ループ・緊急停止検出・ADK Runner 起動 |
+| ADK エージェント | `agent/factory.py` | LlmAgent 定義・モデル設定 |
+| ツール実装 | `agent/tools.py` | 8ツール（RobotTools クラス） |
+| システムプロンプト | `agent/prompt.py` | LLM 向けプロンプト生成 |
+| 能力・定数定義 | `business/capabilities.py` | 速度定数・キーワード（RobotCapabilities クラス） |
+| 共有状態 | `business/shared_state.py` | SharedState シングルトン・スレッド安全な状態管理 |
+| Watchdog | `business/watchdog.py` | 無通信タイムアウト監視・自動停止 |
+| カメラ | `sensors/camera.py` | Image Subscriber・base64変換・鮮度チェック |
+| セッション管理 | `storage/session_store.py` | セッション履歴・コマンドログ JSONL |
+| マクロ管理 | `storage/macro_store.py` | マクロ登録・読み込み（macros.json） |
+| ROS2 ロガーブリッジ | `logging/ros_logger.py` | loguru → rclpy.logging（RosLogger クラス） |
 | ロボット抽象 | `robot/interface.py` | RobotInterface 抽象クラス |
 | 実機実装 | `robot/ros2_robot.py` | ROS2 / Twist パブリッシュ |
 | モック実装 | `robot/mock_robot.py` | simulate / dry_run モード用 |
-| デバッグ CLI | `debug_tools.py` | LLM なしでツールを直接テスト |
-| デモノード | `demo_node.py` | turtlesim 自動デモ・録画・字幕生成 |
+| デバッグ CLI | `cli/debug_tools.py` | LLM なしでツールを直接テスト |
+| デモノード | `demo/demo_node.py` | turtlesim 自動デモ・録画・字幕生成 |
+| 録画ユーティリティ | `demo/recorder.py` | ffmpeg x11grab による画面録画 |
 
 ---
 
@@ -483,23 +485,31 @@ susumu_agent/
 │   ├── mock/                 # MockRobot 使用（未実装）
 │   └── golden/               # 実 LLM・週1回（未実装）
 └── susumu_agent/
-    ├── main.py               # 入力ループ・緊急停止・フィードバック表示
-    ├── agent.py              # AgentFactory / LlmAgent 定義
-    ├── tools.py              # RobotTools（8ツール実装）
-    ├── capabilities.py       # RobotCapabilities（速度定数・プロンプト生成）
-    ├── shared_state.py       # SharedState シングルトン
-    ├── watchdog.py           # Watchdog
-    ├── camera.py             # CameraClient
-    ├── session_store.py      # SessionStore
-    ├── macro_store.py        # MacroStore
-    ├── demo_node.py          # DemoRunner（turtlesim 自動デモ）
-    ├── debug_tools.py        # DebugRunner（LLM なし直接テスト CLI）
-    ├── ros_logger.py         # RosLogger（loguru → ROS2 ブリッジ）
-    ├── turtlesim_recorder.py # TurtlesimRecorder（ffmpeg x11grab）
-    ├── voice/
+    ├── business/             # ビジネスロジック中核（ROS2・ADK 依存ゼロ）
+    │   ├── capabilities.py   # RobotCapabilities（速度定数・キーワード）
+    │   ├── shared_state.py   # SharedState シングルトン
+    │   └── watchdog.py       # Watchdog
+    ├── agent/                # LLM エージェント層
+    │   ├── factory.py        # AgentFactory / LlmAgent 定義
+    │   ├── tools.py          # RobotTools（8ツール実装）
+    │   └── prompt.py         # build_system_prompt()
+    ├── storage/              # 永続化層
+    │   ├── session_store.py  # SessionStore
+    │   └── macro_store.py    # MacroStore
+    ├── sensors/              # センサー系
+    │   └── camera.py         # CameraClient
+    ├── logging/              # ログ基盤
+    │   └── ros_logger.py     # RosLogger（loguru → ROS2 ブリッジ）
+    ├── demo/                 # turtlesim デモ・録画（ROS2 専用）
+    │   ├── demo_node.py      # DemoRunner（turtlesim 自動デモ）
+    │   └── recorder.py       # TurtlesimRecorder（ffmpeg x11grab）
+    ├── cli/                  # CLIエントリポイント
+    │   ├── main.py           # 入力ループ・緊急停止・フィードバック表示
+    │   └── debug_tools.py    # DebugRunner（LLM なし直接テスト CLI）
+    ├── voice/                # 音声 I/F（抽象クラスのみ）
     │   ├── recognizer.py     # BaseSpeechRecognizer 抽象クラス
     │   └── synthesizer.py    # BaseSynthesizer 抽象クラス
-    └── robot/
+    └── robot/                # ロボット抽象化
         ├── interface.py      # RobotInterface 抽象クラス
         ├── ros2_robot.py     # ROS2Robot
         └── mock_robot.py     # MockRobot
@@ -648,8 +658,8 @@ qos = QoSProfile(
 
 ### 4.5 システムプロンプト設計
 
-`capabilities.py` の `RobotCapabilities.build_system_prompt()` が唯一の定義源。
-定数（SPEED_MAP 等）を変更するとプロンプトに自動反映される。
+`agent/prompt.py` の `build_system_prompt()` が唯一の定義源。
+速度定数（`business/capabilities.py` の `RobotCapabilities.SPEED_MAP` 等）を変更するとプロンプトに自動反映される。
 
 **プロンプト優先順位：**
 
@@ -689,7 +699,7 @@ class SharedState:
     def instance(cls) -> SharedState: ...
 ```
 
-**`RobotCapabilities` クラスで定数・ロジックを集約：**
+**`RobotCapabilities` クラスで定数・ロジックを集約（`business/capabilities.py`）：**
 
 ```python
 class RobotCapabilities:
@@ -700,8 +710,10 @@ class RobotCapabilities:
     @classmethod
     def clamp_duration(cls, value: float) -> float: ...
     @classmethod
-    def build_system_prompt(cls, ...) -> str: ...
+    def angle_to_duration(cls, angle_deg: float, speed: SpeedLevel) -> float: ...
 ```
+
+システムプロンプト生成は `agent/prompt.py` の `build_system_prompt()` に分離。定数を変更するとプロンプトに自動反映される。
 
 ---
 
@@ -711,10 +723,10 @@ class RobotCapabilities:
 
 ```bash
 # シミュレーション（ROS2 不要）
-python3 -m susumu_agent.main
+python3 -m susumu_agent
 
 # 設定ファイルを指定
-python3 -m susumu_agent.main /path/to/config.yaml
+python3 -m susumu_agent /path/to/config.yaml
 
 # ROS2 launch（通常）
 ros2 launch susumu_agent mock.launch.py
@@ -728,10 +740,10 @@ ros2 launch susumu_agent real_debug.launch.py
 ros2 launch susumu_agent turtlesim_demo_debug.launch.py
 
 # LLM なしでツールを直接テスト
-python3 -m susumu_agent.debug_tools move forward medium 2.0
-python3 -m susumu_agent.debug_tools rotate 90 medium
-python3 -m susumu_agent.debug_tools sequence square
-python3 -m susumu_agent.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel move forward medium 2.0
+python3 -m susumu_agent.cli.debug_tools move forward medium 2.0
+python3 -m susumu_agent.cli.debug_tools rotate 90 medium
+python3 -m susumu_agent.cli.debug_tools sequence square
+python3 -m susumu_agent.cli.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel move forward medium 2.0
 ```
 
 ---

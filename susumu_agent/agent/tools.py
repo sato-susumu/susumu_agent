@@ -6,13 +6,13 @@ from typing import Literal
 from google.genai import types as genai_types
 from loguru import logger
 
-from susumu_agent.capabilities import (
+from susumu_agent.business.capabilities import (
     SPEED_MAP,
     angle_to_duration,
     clamp_angle,
     clamp_duration,
 )
-from susumu_agent.shared_state import get_state
+from susumu_agent.business.shared_state import get_state
 
 
 class RobotTools:

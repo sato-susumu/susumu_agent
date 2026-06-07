@@ -6,10 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 # シミュレーション起動（ROS2 不要）
-python3 -m susumu_agent.main
+python3 -m susumu_agent
 
 # 設定ファイルを指定して起動
-python3 -m susumu_agent.main /path/to/config.yaml
+python3 -m susumu_agent /path/to/config.yaml
 
 # 単体テスト実行
 pytest
@@ -37,28 +37,57 @@ ros2 launch susumu_agent turtlesim_debug.launch.py
 ros2 launch susumu_agent turtlesim_demo_debug.launch.py
 
 # LLM なしでツールを直接テスト
-python3 -m susumu_agent.debug_tools move forward medium 2.0
-python3 -m susumu_agent.debug_tools rotate 90 medium
-python3 -m susumu_agent.debug_tools sequence square
-python3 -m susumu_agent.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel move forward medium 2.0
+python3 -m susumu_agent.cli.debug_tools move forward medium 2.0
+python3 -m susumu_agent.cli.debug_tools rotate 90 medium
+python3 -m susumu_agent.cli.debug_tools sequence square
+python3 -m susumu_agent.cli.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel move forward medium 2.0
 ```
 
 ## アーキテクチャ
 
-### 処理の流れ
-
-`susumu_agent/main.py` が入力を受け取り、緊急キーワード（`capabilities.py` の `EMERGENCY_KEYWORDS`）に一致すれば LLM を経由せず即時停止する。通常コマンドは `agent.py` が生成した `LlmAgent` に渡し、ADK の Function Calling で `tools.py` の 8 ツールが呼ばれる。ツールは `RobotInterface` 経由でロボットを動かす。
+### パッケージ構成
 
 ```
-main.py → (緊急) → SharedState.stop_event
-        → (通常) → agent.py (LlmAgent) → tools.py → RobotInterface
-                                                    → MockRobot (simulate)
-                                                    → ROS2Robot (real)
+susumu_agent/
+├── business/   # ビジネスロジック中核（ROS2・ADK 依存ゼロ）
+│   ├── capabilities.py   # 速度定数・キーワード（RobotCapabilities クラス）
+│   ├── shared_state.py   # SharedState シングルトン
+│   └── watchdog.py       # 安全監視スレッド
+├── agent/      # LLM エージェント層
+│   ├── factory.py        # AgentFactory / LlmAgent 定義
+│   ├── tools.py          # RobotTools（8ツール実装）
+│   └── prompt.py         # build_system_prompt()
+├── storage/    # 永続化層
+│   ├── session_store.py  # SessionStore
+│   └── macro_store.py    # MacroStore
+├── sensors/    # センサー系
+│   └── camera.py         # CameraClient
+├── logging/    # ログ基盤
+│   └── ros_logger.py     # RosLogger（loguru → ROS2 ブリッジ）
+├── demo/       # turtlesim デモ・録画（ROS2 専用）
+│   ├── demo_node.py      # DemoRunner
+│   └── recorder.py       # TurtlesimRecorder（ffmpeg x11grab）
+├── cli/        # CLIエントリポイント
+│   ├── main.py           # RobotController・入力ループ
+│   └── debug_tools.py    # DebugRunner（LLM なし直接テスト）
+├── robot/      # ロボット抽象化（変更なし）
+└── voice/      # 音声 I/F 抽象クラス（変更なし）
+```
+
+### 処理の流れ
+
+`cli/main.py` が入力を受け取り、緊急キーワード（`business/capabilities.py` の `EMERGENCY_KEYWORDS`）に一致すれば LLM を経由せず即時停止する。通常コマンドは `agent/factory.py` が生成した `LlmAgent` に渡し、ADK の Function Calling で `agent/tools.py` の 8 ツールが呼ばれる。ツールは `RobotInterface` 経由でロボットを動かす。
+
+```
+cli/main.py → (緊急) → SharedState.stop_event
+            → (通常) → agent/factory.py (LlmAgent) → agent/tools.py → RobotInterface
+                                                                      → MockRobot (simulate)
+                                                                      → ROS2Robot (real)
 ```
 
 ### 認証情報・環境変数
 
-`.env`（gitignore 対象）に GCP プロジェクト ID のみ記載する。`agent.py` が起動時に `load_dotenv()` で読み込む。
+`.env`（gitignore 対象）に GCP プロジェクト ID のみ記載する。`cli/main.py` が起動時に `load_dotenv()` で読み込む。
 
 ```dotenv
 GOOGLE_CLOUD_PROJECT=your-project-id
@@ -75,15 +104,15 @@ GOOGLE_CLOUD_PROJECT=your-project-id
 
 ### ロボット能力の定義場所
 
-`susumu_agent/capabilities.py` が唯一の能力定義ファイル。`SPEED_MAP`・`EMERGENCY_KEYWORDS`・`SPEED_KEYWORDS` を変更すると、`build_system_prompt()` が自動的に新しい定義を LLM のシステムプロンプトに反映する。速度値やキーワードを変えるときはここだけ編集すればよい。
+`susumu_agent/business/capabilities.py` が唯一の能力定義ファイル。`SPEED_MAP`・`EMERGENCY_KEYWORDS`・`SPEED_KEYWORDS` を変更すると、`agent/prompt.py` の `build_system_prompt()` が自動的に新しい定義を LLM のシステムプロンプトに反映する。速度値やキーワードを変えるときはここだけ編集すればよい。
 
 ### ツール登録
 
-`susumu_agent/tools.py` の末尾にある `ALL_TOOLS` リストが `agent.py` に渡される。新しいツールを追加するときは、`async def` 関数を実装して `ALL_TOOLS` に追加するだけでよい（ADK が型アノテーションと docstring から自動的にスキーマを生成する）。
+`susumu_agent/agent/tools.py` の `RobotTools.get_all_tools()` が `agent/factory.py` に渡される。新しいツールを追加するときは、`async def` メソッドを実装して `get_all_tools()` に追加するだけでよい（ADK が型アノテーションと docstring から自動的にスキーマを生成する）。
 
 ### スレッド安全性
 
-`susumu_agent/shared_state.py` の `SharedState` シングルトン（`get_state()`）が状態を一元管理する。`stop_event`（緊急停止）と `shutdown_event`（終了）は `threading.Event` で実装されており、Watchdog スレッドと async ループの両方から安全にアクセスできる。
+`susumu_agent/business/shared_state.py` の `SharedState` シングルトン（`get_state()`）が状態を一元管理する。`stop_event`（緊急停止）と `shutdown_event`（終了）は `threading.Event` で実装されており、Watchdog スレッドと async ループの両方から安全にアクセスできる。
 
 ## モデル設定
 
