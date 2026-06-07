@@ -4,16 +4,10 @@ import os
 import warnings
 
 import yaml
+from google.adk.agents import LlmAgent
 from google.genai import types as genai_types
 
 warnings.filterwarnings("ignore", category=UserWarning, module="google.adk")
-
-ADK_AVAILABLE = False
-try:
-    from google.adk.agents import LlmAgent
-    ADK_AVAILABLE = True
-except ImportError:
-    pass
 
 _CLAUDE_REGISTERED = False
 try:
@@ -69,12 +63,6 @@ class AgentFactory:
             )
 
     def create_agent(self, tools_list: list, tools_instance=None) -> "LlmAgent":
-        if not ADK_AVAILABLE:
-            raise RuntimeError(
-                "google-adk がインストールされていません。\n"
-                "pip install google-adk anthropic[vertex] を実行してください。"
-            )
-
         llm_cfg = self._config.get("llm", {})
         iface_cfg = self._config.get("interface", {})
         model = llm_cfg.get("model", "gemini-2.5-flash")

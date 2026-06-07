@@ -6,6 +6,9 @@ ROS2 なしで直接起動する場合は python3 -m susumu_agent.main の方が
 使い方:
     ros2 launch susumu_agent mock.launch.py
     ros2 launch susumu_agent mock.launch.py config_path:=/path/to/config.yaml
+    ros2 launch susumu_agent mock.launch.py cmd_vel_stamped:=true
+
+cmd_vel_stamped は true がデフォルト（TwistStamped）。
 """
 _DEBUG_DIR = '/home/taro/ros2_ws/src/susumu_agent/debug'
 _ENV_FILE = '/home/taro/ros2_ws/src/susumu_agent/.env'
@@ -30,6 +33,11 @@ def generate_launch_description():
         default_value=_ENV_FILE,
         description=".env ファイルのパス",
     )
+    cmd_vel_stamped_arg = DeclareLaunchArgument(
+        "cmd_vel_stamped",
+        default_value="true",
+        description="true の場合 cmd_vel に TwistStamped を使う",
+    )
     debug_arg = DeclareLaunchArgument(
         "debug",
         default_value="false",
@@ -49,6 +57,7 @@ def generate_launch_description():
         emulate_tty=True,
         parameters=[{
             "config_path": LaunchConfiguration("config_path"),
+            "cmd_vel_stamped": LaunchConfiguration("cmd_vel_stamped"),
             "env_file":    LaunchConfiguration("env_file"),
             "debug":       LaunchConfiguration("debug"),
             "debug_dir":   LaunchConfiguration("debug_dir"),
@@ -58,6 +67,7 @@ def generate_launch_description():
     return LaunchDescription([
         config_path_arg,
         env_file_arg,
+        cmd_vel_stamped_arg,
         debug_arg,
         debug_dir_arg,
         LogInfo(msg="susumu_agent を起動します（MockRobot モード）..."),

@@ -9,7 +9,6 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import NamedTuple
 
 import rclpy
 import yaml
@@ -17,7 +16,9 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai.types import Content, Part
 from loguru import logger
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
+from std_msgs.msg import String
 
 from susumu_agent.agent.factory import AgentFactory
 from susumu_agent.sensors.camera import CameraClient
@@ -27,8 +28,12 @@ from susumu_agent.logging.ros_logger import setup_loguru
 from susumu_agent.storage.session_store import SessionStore
 from susumu_agent.business.shared_state import get_state
 from susumu_agent.agent.tools import RobotTools
+from susumu_agent.business.capabilities import EMERGENCY_KEYWORDS
+from susumu_agent.demo.commands import DEMO_COMMAND_BY_TEXT, DemoCommand
 from susumu_agent.demo.recorder import TurtlesimRecorder
 from susumu_agent.business.watchdog import Watchdog
+
+_MIN_SUBTITLE_DURATION_SEC = 2.0
 
 try:
     from dotenv import load_dotenv
@@ -37,10 +42,10 @@ except ImportError:
     _DOTENV_AVAILABLE = False
 
 
-class DemoCommand(NamedTuple):
-    ja: str
-    en: str
-    interrupt_after_sec: float = 0.0  # >0 のとき、このコマンド発行後に指定秒数待って緊急停止を割り込ませる
+def _as_bool(value: bool | str) -> bool:
+    if isinstance(value, bool):
+        return value
+    return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
 # ------------------------------------------------------------------ SRT helpers
@@ -178,7 +183,11 @@ def _start_recorder(debug: bool, debug_dir: str) -> tuple:
 # ------------------------------------------------------------------ ADK setup
 
 def _build_tools(config: dict, node: Node):
-    robot = ROS2Robot(node, "/turtle1/cmd_vel")
+    robot = ROS2Robot(
+        node,
+        "/turtle1/cmd_vel",
+        _as_bool(config.get("robot", {}).get("cmd_vel_stamped", False)),
+    )
     tools = RobotTools(
         robot=robot,
         camera=CameraClient(image_topic="/camera/image_raw", mode="real", node=node),
@@ -211,52 +220,47 @@ async def _run_command(runner: Runner, session_id: str, cmd: str) -> str:
     return result_text.strip()
 
 
-async def _run_command_with_interrupt(
-    runner: Runner,
-    session_id: str,
-    demo_cmd: DemoCommand,
-    tools,
-    state,
-) -> str:
-    """コマンドを実行し、interrupt_after_sec > 0 なら指定秒後に緊急停止を割り込ませる。"""
-    if demo_cmd.interrupt_after_sec <= 0:
-        return await _run_command(runner, session_id, demo_cmd.ja)
-
-    async def _interrupt() -> None:
-        await asyncio.sleep(demo_cmd.interrupt_after_sec)
-        logger.info(f"割り込み停止（{demo_cmd.interrupt_after_sec}秒後）")
-        state.stop_event.set()
-        await tools._robot.stop()
-
-    cmd_task = asyncio.create_task(_run_command(runner, session_id, demo_cmd.ja))
-    interrupt_task = asyncio.create_task(_interrupt())
-    try:
-        response = await cmd_task
-    finally:
-        interrupt_task.cancel()
-    return response
-
-
 # ------------------------------------------------------------------ DemoRunner
 
 class DemoRunner:
-    _DEMO_COMMANDS: list[DemoCommand] = [
-        DemoCommand("素早く3秒前進して",                        "Move forward fast for 3 seconds"),
-        DemoCommand("右に90度、素早く回転して",                  "Turn right 90 degrees fast"),
-        DemoCommand("素早く3秒前進して",                        "Move forward fast for 3 seconds"),
-        DemoCommand("左に90度、素早く回転して",                  "Turn left 90 degrees fast"),
-        DemoCommand("三角形を描いて。1辺は素早く3秒で移動すること", "Draw a triangle fast (3 sec per side)"),
-        DemoCommand("カメラに何が映っている？",                  "What does the camera see?"),
-        # 正方形を描いている途中（5秒後）にストップを割り込ませる
-        DemoCommand("正方形を描いて。1辺は素早く3秒で移動すること", "Draw a square fast (3 sec per side)", interrupt_after_sec=5.0),
-        DemoCommand("ストップ",                                "Stop"),
-    ]
-
     def __init__(self, config: dict, node: Node, debug: bool = False, debug_dir: str = "debug") -> None:
         self._config = config
         self._node = node
         self._debug = debug
         self._debug_dir = debug_dir
+        self._loop = None
+        self._input_queue = None
+        self._to_human_pub = None
+        self._tools = None
+
+    def _is_emergency(self, text: str) -> bool:
+        normalized = text.strip().lower()
+        return any(kw.lower() in normalized for kw in EMERGENCY_KEYWORDS)
+
+    def _setup_topic_io(self, loop: asyncio.AbstractEventLoop) -> None:
+        interface_cfg = self._config.get("interface", {})
+        from_topic = interface_cfg.get("from_human_topic", "/from_human")
+        to_topic = interface_cfg.get("to_human_topic", "/to_human")
+        self._loop = loop
+        self._input_queue = asyncio.Queue()
+        self._to_human_pub = self._node.create_publisher(String, to_topic, 10)
+
+        def _on_from_human(msg: String) -> None:
+            text = msg.data.strip()
+            if not text or self._loop is None or self._input_queue is None:
+                return
+            if self._is_emergency(text) and self._tools is not None:
+                get_state().stop_event.set()
+                self._tools._robot.stop()
+            self._loop.call_soon_threadsafe(self._input_queue.put_nowait, text)
+
+        self._node.create_subscription(String, from_topic, _on_from_human, 10)
+        logger.info(f"デモ入力: {from_topic} (std_msgs/String)")
+        logger.info(f"デモ応答: {to_topic} (std_msgs/String)")
+
+    def _publish_to_human(self, text: str) -> None:
+        if self._to_human_pub is not None:
+            self._to_human_pub.publish(String(data=text))
 
     def _collect_camera_image_if_needed(
         self, demo_cmd: DemoCommand, tools, step: int, ts_str: str
@@ -288,9 +292,10 @@ class DemoRunner:
         cmd_end: float,
         record_start_time: float,
     ) -> dict:
+        subtitle_end = max(cmd_end, cmd_start + _MIN_SUBTITLE_DURATION_SEC)
         return {
             "start_sec": cmd_start - record_start_time,
-            "end_sec": cmd_end - record_start_time,
+            "end_sec": subtitle_end - record_start_time,
             "command": demo_cmd.ja,
             "command_en": demo_cmd.en,
             "response": response,
@@ -299,6 +304,8 @@ class DemoRunner:
 
     async def run(self) -> None:
         tools = _build_tools(self._config, self._node)
+        self._tools = tools
+        self._setup_topic_io(asyncio.get_running_loop())
         runner, session_id = await _setup_adk(self._config, tools)
         recorder, video_path, record_start_time = _start_recorder(self._debug, self._debug_dir)
 
@@ -306,32 +313,41 @@ class DemoRunner:
         srt_entries: list[dict] = []
 
         state = get_state()
-        logger.info("turtlesim エージェントデモ開始")
+        logger.info("turtlesim エージェントデモ開始（/from_human 待ち受け）")
 
-        total = len(self._DEMO_COMMANDS)
         ts_str = datetime.datetime.fromtimestamp(
             record_start_time or datetime.datetime.now().timestamp()
         ).strftime("%Y%m%d_%H%M%S")
 
         try:
-            for i, demo_cmd in enumerate(self._DEMO_COMMANDS):
-                logger.info(f"[{i+1}/{total}] 入力: {demo_cmd.ja!r}")
+            step = 0
+            while not state.shutdown_event.is_set():
+                if self._input_queue is None:
+                    raise RuntimeError("デモ入力キューが初期化されていません。")
+                user_input = await self._input_queue.get()
+                step += 1
+                demo_cmd = DEMO_COMMAND_BY_TEXT.get(user_input, DemoCommand(user_input, ""))
+                logger.info(f"[{step}] 入力: {demo_cmd.ja!r}")
                 state.stop_event.clear()
                 tools.clear_tool_call_log()
                 cmd_start = datetime.datetime.now().timestamp()
 
-                response = await _run_command_with_interrupt(
-                    runner, session_id, demo_cmd, tools, state
-                )
+                if self._is_emergency(user_input):
+                    state.stop_event.set()
+                    tools._robot.stop()
+                    response = "停止しました。"
+                else:
+                    response = await _run_command(runner, session_id, user_input)
                 cmd_end = datetime.datetime.now().timestamp()
                 tool_calls = tools.get_tool_call_log()
                 logger.info(f"応答: {response}")
+                self._publish_to_human(response)
 
-                self._collect_camera_image_if_needed(demo_cmd, tools, i + 1, ts_str)
+                self._collect_camera_image_if_needed(demo_cmd, tools, step, ts_str)
 
                 if self._debug:
                     label_entries.append(
-                        self._make_label_entry(i + 1, demo_cmd, response, tool_calls)
+                        self._make_label_entry(step, demo_cmd, response, tool_calls)
                     )
                     if record_start_time is not None:
                         srt_entries.append(
@@ -370,10 +386,12 @@ def main() -> None:
     rclpy.init()
     node = Node("susumu_agent_demo")
     node.declare_parameter("config_path", "")
+    node.declare_parameter("cmd_vel_stamped", False)
     node.declare_parameter("env_file", "")
-    node.declare_parameter("debug", "false")
+    node.declare_parameter("debug", False)
     node.declare_parameter("debug_dir", "debug")
     config_path = node.get_parameter("config_path").value or "config.yaml"
+    cmd_vel_stamped = node.get_parameter("cmd_vel_stamped").value
     env_file = node.get_parameter("env_file").value or None
     raw = node.get_parameter("debug").value
     debug = raw if isinstance(raw, bool) else str(raw).lower() == "true"
@@ -388,16 +406,26 @@ def main() -> None:
 
     p = Path(config_path)
     config = yaml.safe_load(p.read_text(encoding="utf-8")) if p.exists() else {}
+    config.setdefault("robot", {})["cmd_vel_stamped"] = _as_bool(cmd_vel_stamped)
 
-    spin_thread = threading.Thread(target=rclpy.spin, args=(node,), daemon=True)
+    def _spin() -> None:
+        try:
+            rclpy.spin(node)
+        except ExternalShutdownException:
+            pass
+
+    spin_thread = threading.Thread(target=_spin, daemon=True)
     spin_thread.start()
 
     try:
         asyncio.run(DemoRunner(config, node, debug=debug, debug_dir=debug_dir).run())
+    except KeyboardInterrupt:
+        pass
     finally:
-        node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
+        spin_thread.join(timeout=1.0)
+        node.destroy_node()
 
 
 if __name__ == "__main__":

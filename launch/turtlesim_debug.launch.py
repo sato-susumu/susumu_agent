@@ -6,6 +6,9 @@ turtlesim.launch.py の debug:=true 固定版。
 使い方:
     ros2 launch susumu_agent turtlesim_debug.launch.py
     ros2 launch susumu_agent turtlesim_debug.launch.py debug_dir:=/tmp/mydbg
+    ros2 launch susumu_agent turtlesim_debug.launch.py cmd_vel_stamped:=false
+
+cmd_vel_stamped は false がデフォルト（turtlesim 用 Twist）。
 """
 _DEBUG_DIR = '/home/taro/ros2_ws/src/susumu_agent/debug'
 _ENV_FILE = '/home/taro/ros2_ws/src/susumu_agent/.env'
@@ -30,6 +33,11 @@ def generate_launch_description():
         default_value=_ENV_FILE,
         description=".env ファイルのパス",
     )
+    cmd_vel_stamped_arg = DeclareLaunchArgument(
+        "cmd_vel_stamped",
+        default_value="false",
+        description="true の場合 cmd_vel に TwistStamped を使う",
+    )
     debug_dir_arg = DeclareLaunchArgument(
         "debug_dir",
         default_value=_DEBUG_DIR,
@@ -52,8 +60,9 @@ def generate_launch_description():
         parameters=[{
             "config_path": LaunchConfiguration("config_path"),
             "robot_mode":  "real",
+            "cmd_vel_stamped": LaunchConfiguration("cmd_vel_stamped"),
             "env_file":    LaunchConfiguration("env_file"),
-            "debug":       "true",
+            "debug":       True,
             "debug_dir":   LaunchConfiguration("debug_dir"),
         }],
         remappings=[
@@ -64,6 +73,7 @@ def generate_launch_description():
     return LaunchDescription([
         config_path_arg,
         env_file_arg,
+        cmd_vel_stamped_arg,
         debug_dir_arg,
         LogInfo(msg="susumu_agent を起動します（turtlesim デバッグモード）..."),
         turtlesim_node,

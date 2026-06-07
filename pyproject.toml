@@ -23,6 +23,7 @@ dependencies = [
 susumu_agent_node  = "susumu_agent.cli.main:main_entry"
 susumu_agent_debug = "susumu_agent.cli.debug_tools:main"
 susumu_agent_demo  = "susumu_agent.demo.demo_node:main"
+susumu_agent_demo_feeder = "susumu_agent.demo.command_publisher:main"
 
 [tool.ruff]
 line-length = 120

@@ -9,7 +9,7 @@ from .interface import Direction, RobotInterface, SpeedLevel
 
 try:
     import rclpy  # noqa: F401
-    from geometry_msgs.msg import Twist
+    from geometry_msgs.msg import Twist, TwistStamped
     from rclpy.node import Node
     from rclpy.qos import DurabilityPolicy, HistoryPolicy, QoSProfile, ReliabilityPolicy
     ROS2_AVAILABLE = True
@@ -20,21 +20,35 @@ except ImportError:
 class ROS2Robot(RobotInterface):
     """実機向け ROS2 実装。rclpy が必要。"""
 
-    def __init__(self, node: "Node", cmd_vel_topic: str = "/cmd_vel"):
+    def __init__(
+        self,
+        node: "Node",
+        cmd_vel_topic: str = "/cmd_vel",
+        cmd_vel_stamped: bool = False,
+    ):
         if not ROS2_AVAILABLE:
             raise RuntimeError("rclpy が利用できません。simulate モードを使用してください。")
+        self._node = node
+        self._cmd_vel_stamped = cmd_vel_stamped
         qos = QoSProfile(
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
             history=HistoryPolicy.KEEP_LAST,
             depth=10,
         )
-        self._pub = node.create_publisher(Twist, cmd_vel_topic, qos)
+        msg_cls = TwistStamped if self._cmd_vel_stamped else Twist
+        self._pub = node.create_publisher(msg_cls, cmd_vel_topic, qos)
 
     def _publish(self, linear_x: float, angular_z: float) -> None:
-        msg = Twist()
-        msg.linear.x = linear_x
-        msg.angular.z = angular_z
+        if self._cmd_vel_stamped:
+            msg = TwistStamped()
+            msg.header.stamp = self._node.get_clock().now().to_msg()
+            msg.twist.linear.x = linear_x
+            msg.twist.angular.z = angular_z
+        else:
+            msg = Twist()
+            msg.linear.x = linear_x
+            msg.angular.z = angular_z
         self._pub.publish(msg)
 
     async def move(self, direction: Direction, speed: SpeedLevel, duration_sec: float) -> None:

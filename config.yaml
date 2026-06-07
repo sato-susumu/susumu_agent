@@ -1,6 +1,7 @@
 robot:
   namespace: ""
   cmd_vel_topic: "/cmd_vel"
+  cmd_vel_stamped: true  # true=geometry_msgs/msg/TwistStamped, false=geometry_msgs/msg/Twist
   image_topic: "/camera/image_raw"
   battery_topic: ""
   battery_low_threshold: 20
@@ -13,7 +14,6 @@ robot:
   mode: "simulate"              # real / simulate / dry_run
   compliance_mode: false
   human_presence_max_speed: 0.25
-  offline_fallback: true
 
 llm:
   model: "gemini-2.5-flash"  # gemini-2.5-flash / gemini-2.5-pro
@@ -26,6 +26,8 @@ llm:
 
 interface:
   language: "auto"
+  from_human_topic: "/from_human"
+  to_human_topic: "/to_human"
   verbosity: "normal"           # brief / normal / verbose
   feedback_modes:
     - text
