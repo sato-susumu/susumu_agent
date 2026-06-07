@@ -7,8 +7,10 @@ from __future__ import annotations
 import asyncio
 import datetime
 import importlib.util
+import json
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import click
@@ -66,6 +68,7 @@ class RobotController:
         self._ros_input_queue = None
         self._ros_loop = None
         self._to_human_pub = None
+        self._agent_event_pub = None
         self._from_human_sub = None
 
     @classmethod
@@ -139,17 +142,39 @@ class RobotController:
 
     # ------------------------------------------------------------------ ADK runner
 
-    async def _run_with_adk(self, user_input: str) -> str:
+    async def _run_with_adk(
+        self,
+        user_input: str,
+        on_text: Callable[[str], None] | None = None,
+    ) -> str:
         runner = Runner(agent=self._agent, session_service=self._session_service, app_name="robot_nl")
         content = Content(role="user", parts=[Part(text=user_input)])
         result_text = ""
+        preannounce_text = ""
+        observed = False
         async for event in runner.run_async(
             user_id="operator", session_id=self._session_id, new_message=content,
         ):
-            if event.is_final_response() and event.content:
-                for part in event.content.parts:
-                    if hasattr(part, "text") and part.text:
-                        result_text += part.text
+            if not event.content:
+                continue
+            func_calls = event.get_function_calls()
+            has_tool_call = bool(func_calls)
+            if any(fc.name == "observe" for fc in func_calls):
+                observed = True
+            for part in event.content.parts:
+                if hasattr(part, "text") and part.text:
+                    result_text += part.text
+                    if not preannounce_text and on_text is not None and has_tool_call:
+                        preannounce_text = part.text
+                        on_text(part.text)
+            if event.is_final_response() and on_text is not None:
+                final_text = result_text.strip()
+                if observed and preannounce_text and final_text.startswith(preannounce_text):
+                    diff = final_text[len(preannounce_text):].strip()
+                    if diff:
+                        on_text(diff)
+                elif not preannounce_text and final_text:
+                    on_text(final_text)
         return result_text
 
     def _setup_ros_topic_io(self, loop: asyncio.AbstractEventLoop) -> None:
@@ -164,14 +189,17 @@ class RobotController:
         interface_cfg = self._config.get("interface", {})
         from_topic = interface_cfg.get("from_human_topic", "/from_human")
         to_topic = interface_cfg.get("to_human_topic", "/to_human")
+        agent_event_topic = interface_cfg.get("agent_event_topic", "/agent_event")
         self._ros_loop = loop
         self._ros_input_queue = asyncio.Queue()
         self._to_human_pub = self._ros_node.create_publisher(String, to_topic, 10)
+        self._agent_event_pub = self._ros_node.create_publisher(String, agent_event_topic, 10)
 
         def _on_from_human(msg: String) -> None:
             text = msg.data.strip()
             if not text or self._ros_input_queue is None or self._ros_loop is None:
                 return
+            logger.info(f"[/from_human] {text}")
             if self._is_emergency(text) and self._robot is not None:
                 get_state().stop_event.set()
                 self._robot.stop()
@@ -182,6 +210,7 @@ class RobotController:
         self._ros_spin_thread.start()
         logger.info(f"ROS2 入力: {from_topic} (std_msgs/String)")
         logger.info(f"ROS2 応答: {to_topic} (std_msgs/String)")
+        logger.info(f"エージェントイベント: {agent_event_topic} (std_msgs/String)")
 
     def _spin_ros_node(self) -> None:
         import rclpy  # noqa: PLC0415
@@ -197,15 +226,29 @@ class RobotController:
             return
         from std_msgs.msg import String  # noqa: PLC0415
 
+        logger.info(f"[/to_human] {text}")
         self._to_human_pub.publish(String(data=text))
+
+    def _publish_agent_event(self, event: dict) -> None:
+        if self._agent_event_pub is None:
+            return
+        from std_msgs.msg import String  # noqa: PLC0415
+
+        payload = json.dumps(event, ensure_ascii=False)
+        logger.info(f"[/agent_event] {payload}")
+        self._agent_event_pub.publish(String(data=payload))
 
     # ------------------------------------------------------------------ main loop
 
-    async def _handle_input(self, user_input: str) -> str:
+    async def _handle_input(
+        self,
+        user_input: str,
+        on_text: Callable[[str], None] | None = None,
+    ) -> str:
         if self._agent is None or self._session_service is None:
             raise RuntimeError("ADK エージェントが初期化されていません。")
         return await asyncio.wait_for(
-            self._run_with_adk(user_input),
+            self._run_with_adk(user_input, on_text=on_text),
             timeout=self._config["llm"].get("timeout_sec", 5),
         )
 
@@ -233,7 +276,13 @@ class RobotController:
         if self._ros_node is not None:
             self._ros_node.destroy_node()
 
-    async def _process_user_input(self, user_input: str, session_store: SessionStore, state) -> str | None:
+    async def _process_user_input(
+        self,
+        user_input: str,
+        session_store: SessionStore,
+        state,
+        on_text: Callable[[str], None] | None = None,
+    ) -> str | None:
         if self._is_help(user_input):
             logger.info("\n" + self._WELCOME_MSG)
             return self._WELCOME_MSG
@@ -246,12 +295,11 @@ class RobotController:
             session_store.save_turn("assistant", "停止しました。")
             return "停止しました。"
 
-        logger.info(f"入力: {user_input!r}")
         logger.info("考え中...")
         session_store.save_turn("user", user_input)
 
         try:
-            response = await self._handle_input(user_input)
+            response = await self._handle_input(user_input, on_text=on_text)
         except asyncio.TimeoutError:
             response = "タイムアウトしました。もう一度お試しください。"
             logger.error(response)
@@ -260,7 +308,6 @@ class RobotController:
             logger.error(response)
 
         session_store.save_turn("assistant", response)
-        logger.info(f"応答: {response}")
         return response
 
     async def _run_stdin_loop(self) -> None:
@@ -280,12 +327,26 @@ class RobotController:
             raise RuntimeError("ROS2 topic 入力キューが初期化されていません。")
         session_store = SessionStore()
         state = get_state()
+
+        loop = asyncio.get_running_loop()
+
+        def _on_agent_event(event: dict) -> None:
+            loop.call_soon_threadsafe(
+                lambda: self._publish_agent_event(event)
+            )
+
+        if self._tools is not None:
+            self._tools.set_agent_event_callback(_on_agent_event)
+
         self._publish_to_human(self._WELCOME_MSG)
         while not state.shutdown_event.is_set():
             user_input = await self._ros_input_queue.get()
-            response = await self._process_user_input(user_input, session_store, state)
+            response = await self._process_user_input(
+                user_input, session_store, state,
+                on_text=self._publish_to_human,
+            )
             if response:
-                self._publish_to_human(response)
+                self._publish_agent_event({"type": "action_completed", "response": response})
 
     async def run(self) -> None:
         try:

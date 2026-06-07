@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import threading
 import time
 
@@ -17,43 +18,51 @@ class DemoCommandPublisher:
         self,
         node: Node,
         from_human_topic: str = "/from_human",
-        to_human_topic: str = "/to_human",
+        agent_event_topic: str = "/agent_event",
         response_timeout_sec: float = 90.0,
         interval_sec: float = 1.0,
         final_hold_sec: float = 5.0,
     ) -> None:
         self._node = node
         self._pub = node.create_publisher(String, from_human_topic, 10)
-        self._response_event = threading.Event()
+        self._completed_event = threading.Event()
         self._response_timeout_sec = response_timeout_sec
         self._interval_sec = interval_sec
         self._final_hold_sec = final_hold_sec
-        self._node.create_subscription(String, to_human_topic, self._on_to_human, 10)
+        self._node.create_subscription(String, agent_event_topic, self._on_agent_event, 10)
 
-    def _on_to_human(self, msg: String) -> None:
-        if msg.data.strip():
-            logger.info(f"/to_human: {msg.data.strip()}")
-            self._response_event.set()
+    def _on_agent_event(self, msg: String) -> None:
+        text = msg.data.strip()
+        if not text:
+            return
+        try:
+            event = json.loads(text)
+        except json.JSONDecodeError:
+            return
+        event_type = event.get("type", "")
+        logger.info(f"[/agent_event] {json.dumps(event, ensure_ascii=False)}")
+        if event_type == "action_completed":
+            self._completed_event.set()
 
     def _publish_and_wait(self, text: str) -> None:
-        self._response_event.clear()
-        logger.info(f"/from_human: {text}")
+        self._completed_event.clear()
+        logger.info(f"[/from_human] {text}")
         self._pub.publish(String(data=text))
-        if not self._response_event.wait(self._response_timeout_sec):
-            logger.warning(f"応答待ちがタイムアウトしました: {text}")
+        if not self._completed_event.wait(self._response_timeout_sec):
+            logger.warning(f"完了待ちがタイムアウトしました: {text}")
         time.sleep(self._interval_sec)
 
     def run(self) -> None:
         time.sleep(1.0)
         for demo_cmd in DEMO_COMMANDS:
-            self._response_event.clear()
-            logger.info(f"/from_human: {demo_cmd.ja}")
+            self._completed_event.clear()
+            logger.info(f"[/from_human] {demo_cmd.ja}")
             self._pub.publish(String(data=demo_cmd.ja))
             if demo_cmd.interrupt_after_sec > 0:
                 time.sleep(demo_cmd.interrupt_after_sec)
                 self._publish_and_wait("ストップ")
-            elif not self._response_event.wait(self._response_timeout_sec):
-                logger.warning(f"応答待ちがタイムアウトしました: {demo_cmd.ja}")
+            elif not self._completed_event.wait(self._response_timeout_sec):
+                logger.warning(f"完了待ちがタイムアウトしました: {demo_cmd.ja}")
             time.sleep(self._interval_sec)
         if self._final_hold_sec > 0:
             logger.info(f"最終応答後 {self._final_hold_sec:.1f} 秒待ってから終了します。")
@@ -65,13 +74,13 @@ def main() -> None:
     rclpy.init()
     node = Node("susumu_agent_demo_feeder")
     node.declare_parameter("from_human_topic", "/from_human")
-    node.declare_parameter("to_human_topic", "/to_human")
+    node.declare_parameter("agent_event_topic", "/agent_event")
     node.declare_parameter("response_timeout_sec", 90.0)
     node.declare_parameter("interval_sec", 1.0)
     node.declare_parameter("final_hold_sec", 5.0)
 
     from_human_topic = node.get_parameter("from_human_topic").value or "/from_human"
-    to_human_topic = node.get_parameter("to_human_topic").value or "/to_human"
+    agent_event_topic = node.get_parameter("agent_event_topic").value or "/agent_event"
     response_timeout_sec = float(node.get_parameter("response_timeout_sec").value)
     interval_sec = float(node.get_parameter("interval_sec").value)
     final_hold_sec = float(node.get_parameter("final_hold_sec").value)
@@ -79,7 +88,7 @@ def main() -> None:
     publisher = DemoCommandPublisher(
         node,
         from_human_topic=from_human_topic,
-        to_human_topic=to_human_topic,
+        agent_event_topic=agent_event_topic,
         response_timeout_sec=response_timeout_sec,
         interval_sec=interval_sec,
         final_hold_sec=final_hold_sec,

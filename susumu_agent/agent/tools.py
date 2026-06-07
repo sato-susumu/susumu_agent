@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+from collections.abc import Callable
 from typing import Literal
 
 from google.genai import types as genai_types
@@ -23,6 +24,17 @@ class RobotTools:
         self._macro_store = macro_store
         self._tool_call_log: list[str] = []
         self._pending_image_parts: list[genai_types.Part] = []
+        self._agent_event_callback: Callable[[dict], None] | None = None
+
+    def set_agent_event_callback(self, callback: Callable[[dict], None]) -> None:
+        self._agent_event_callback = callback
+
+    def _emit(self, event: dict) -> None:
+        if self._agent_event_callback is not None:
+            try:
+                self._agent_event_callback(event)
+            except Exception as e:
+                logger.warning(f"[tool] agent_event_callback エラー: {e}")
 
     def clear_tool_call_log(self) -> None:
         self._tool_call_log.clear()
@@ -58,9 +70,14 @@ class RobotTools:
         self._session_store.append_command_log({"event": "tool_call", "tool": "move_robot",
                                                 "direction": direction, "speed": speed,
                                                 "duration_sec": duration_sec})
+        self._emit({"type": "tool_start", "tool": "move_robot",
+                    "direction": direction, "speed": speed, "duration_sec": duration_sec})
         if state.stop_event.is_set():
+            self._emit({"type": "tool_done", "tool": "move_robot", "status": "aborted"})
             return {"status": "aborted", "reason": "緊急停止中"}
         await self._robot.move(direction, speed, duration_sec)
+        self._emit({"type": "tool_done", "tool": "move_robot", "status": "ok",
+                    "direction": direction, "speed": speed, "duration_sec": duration_sec})
         return {"status": "ok", "direction": direction, "speed": speed,
                 "linear_x": SPEED_MAP[speed]["linear"], "duration_sec": duration_sec}
 
@@ -84,9 +101,14 @@ class RobotTools:
         state.last_command = {"tool": "rotate_robot", "angle_deg": angle_deg, "speed": speed}
         self._session_store.append_command_log({"event": "tool_call", "tool": "rotate_robot",
                                                 "angle_deg": angle_deg, "speed": speed})
+        self._emit({"type": "tool_start", "tool": "rotate_robot",
+                    "angle_deg": angle_deg, "speed": speed})
         if state.stop_event.is_set():
+            self._emit({"type": "tool_done", "tool": "rotate_robot", "status": "aborted"})
             return {"status": "aborted", "reason": "緊急停止中"}
         await self._robot.rotate(angle_deg, speed)
+        self._emit({"type": "tool_done", "tool": "rotate_robot", "status": "ok",
+                    "angle_deg": angle_deg, "speed": speed, "duration_sec": round(duration_sec, 2)})
         return {"status": "ok", "angle_deg": angle_deg, "speed": speed,
                 "duration_sec": round(duration_sec, 2)}
 
@@ -107,9 +129,12 @@ class RobotTools:
         self._tool_call_log.append(msg)
         self._session_store.append_command_log({"event": "tool_call", "tool": "execute_sequence",
                                                 "total_steps": total})
+        self._emit({"type": "tool_start", "tool": "execute_sequence", "total_steps": total})
         for step in steps:
             if state.stop_event.is_set():
                 logger.info(f"[tool] execute_sequence 中断（{completed}/{total} 完了）")
+                self._emit({"type": "tool_done", "tool": "execute_sequence", "status": "interrupted",
+                            "completed_steps": completed, "total": total})
                 return {"status": "interrupted", "completed_steps": completed, "total": total}
             if step.get("type") == "rotate":
                 await self.rotate_robot(
@@ -123,6 +148,8 @@ class RobotTools:
                     duration_sec=step.get("duration_sec", 2.0),
                 )
             completed += 1
+        self._emit({"type": "tool_done", "tool": "execute_sequence", "status": "ok",
+                    "completed_steps": completed, "total": total})
         return {"status": "ok", "completed_steps": completed, "total": total}
 
     async def observe(

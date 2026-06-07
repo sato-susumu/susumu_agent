@@ -86,17 +86,34 @@ susumu_agent/
 
 `cli/main.py` が入力を受け取り、緊急キーワード（`business/capabilities.py` の `EMERGENCY_KEYWORDS`）に一致すれば LLM を経由せず即時停止する。通常コマンドは `agent/factory.py` が生成した `LlmAgent` に渡し、ADK の Function Calling で `agent/tools.py` の 8 ツールが呼ばれる。ツールは `RobotInterface` 経由でロボットを動かす。
 
-ROS2 launch 経由では `input("あなた: ").strip()` を使わず、ADK への入力は `/from_human` (`std_msgs/msg/String`) で受け取る。ADK の final response から集めた人間向け文字列は `/to_human` (`std_msgs/msg/String`) に publish する。`turtlesim_demo.launch.py` / `turtlesim_demo_debug.launch.py` では `susumu_agent_demo_feeder` がデモ内容を `/from_human` に流し、`susumu_agent_demo` がそれを受けて実行・録画する。
+ROS2 launch 経由では `input("あなた: ").strip()` を使わず、ADK への入力は `/from_human` (`std_msgs/msg/String`) で受け取る。`/to_human` (`std_msgs/msg/String`) への publish タイミングはケースによって異なる：
 
-turtlesim デモの STOP は、正方形デモの `interrupt_after_sec=5.0` による割り込みとして `susumu_agent_demo_feeder` が1回だけ送る。`DEMO_COMMANDS` の末尾に固定の `ストップ` を追加すると字幕が二重になるため追加しない。feeder は最後の `/to_human` 応答後 `final_hold_sec`（デフォルト5秒）待ってから終了する。
+| ケース | `/to_human` の内容・タイミング |
+|---|---|
+| 移動・旋回・シーケンス | LLM がツール呼び出しを含む応答を返した時点（動作開始前）の宣言テキストを即時 publish（1回のみ） |
+| カメラ確認（observe） | 動作開始前の宣言テキストを即時 publish した後、最終応答から宣言部分を除いた差分（カメラに映った内容）を追加 publish |
+| ツール呼び出しなし（エラー・unsupported など） | 最終応答テキストを publish |
+
+ツール呼び出し開始・完了・行動完了などの状態イベントは `/agent_event` (`std_msgs/msg/String`) に JSON 形式で publish する。イベント種別：
+
+| type | タイミング | 主なフィールド |
+|---|---|---|
+| `tool_start` | ツール呼び出し開始直前 | `tool`, パラメータ各種 |
+| `tool_done` | ツール呼び出し完了直後 | `tool`, `status`, 結果各種 |
+| `action_completed` | LLM 最終応答確定後 | `response`（全文） |
+
+`turtlesim_demo.launch.py` / `turtlesim_demo_debug.launch.py` では `susumu_agent_demo_feeder` がデモ内容を `/from_human` に流し、`susumu_agent_demo` がそれを受けて実行・録画する。feeder は `/agent_event` の `action_completed` イベントを受信したら次のコマンドを送信する。
+
+turtlesim デモの STOP は、正方形デモの `interrupt_after_sec=5.0` による割り込みとして `susumu_agent_demo_feeder` が1回だけ送る。`DEMO_COMMANDS` の末尾に固定の `ストップ` を追加すると字幕が二重になるため追加しない。feeder は最後の `action_completed` 受信後 `final_hold_sec`（デフォルト5秒）待ってから終了する。
 
 ```
 CLI直起動 input() / ROS2 /from_human
             → (緊急) → SharedState.stop_event
             → (通常) → agent/factory.py (LlmAgent) → agent/tools.py → RobotInterface
-                                                                      → MockRobot (simulate)
-                                                                      → ROS2Robot (real)
-            → (応答) → ROS2 /to_human（launch時）
+                                                    ↓ ツール呼び出し前の発話    → MockRobot (simulate)
+                                                    → ROS2 /to_human（即時）   → ROS2Robot (real)
+                                                    ↓ ツール状態イベント
+                                                    → ROS2 /agent_event（tool_start / tool_done / action_completed）
 ```
 
 ### 認証情報・環境変数

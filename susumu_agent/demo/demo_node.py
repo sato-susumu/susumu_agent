@@ -8,6 +8,7 @@ import json
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import rclpy
@@ -209,14 +210,43 @@ async def _setup_adk(config: dict, tools) -> tuple:
 
 # ------------------------------------------------------------------ per-command execution
 
-async def _run_command(runner: Runner, session_id: str, cmd: str) -> str:
+async def _run_command(
+    runner: Runner,
+    session_id: str,
+    cmd: str,
+    on_text: Callable[[str], None] | None = None,
+) -> str:
+    """コマンドを実行する。
+
+    on_text: ツール呼び出しを含む event の text part（行動前の宣言）を即時通知する。
+             ツール呼び出しがない場合は最終応答テキストを通知する。
+    戻り値は最終応答テキスト。
+    """
     content = Content(role="user", parts=[Part(text=cmd)])
     result_text = ""
+    preannounce_text = ""
+    observed = False
     async for event in runner.run_async(user_id="demo", session_id=session_id, new_message=content):
-        if event.is_final_response() and event.content:
-            for part in event.content.parts:
-                if hasattr(part, "text") and part.text:
-                    result_text += part.text
+        if not event.content:
+            continue
+        func_calls = event.get_function_calls()
+        has_tool_call = bool(func_calls)
+        if any(fc.name == "observe" for fc in func_calls):
+            observed = True
+        for part in event.content.parts:
+            if hasattr(part, "text") and part.text:
+                result_text += part.text
+                if not preannounce_text and on_text is not None and has_tool_call:
+                    preannounce_text = part.text
+                    on_text(part.text)
+        if event.is_final_response() and on_text is not None:
+            final_text = result_text.strip()
+            if observed and preannounce_text and final_text.startswith(preannounce_text):
+                diff = final_text[len(preannounce_text):].strip()
+                if diff:
+                    on_text(diff)
+            elif not preannounce_text and final_text:
+                on_text(final_text)
     return result_text.strip()
 
 
@@ -231,6 +261,7 @@ class DemoRunner:
         self._loop = None
         self._input_queue = None
         self._to_human_pub = None
+        self._agent_event_pub = None
         self._tools = None
 
     def _is_emergency(self, text: str) -> bool:
@@ -241,14 +272,17 @@ class DemoRunner:
         interface_cfg = self._config.get("interface", {})
         from_topic = interface_cfg.get("from_human_topic", "/from_human")
         to_topic = interface_cfg.get("to_human_topic", "/to_human")
+        agent_event_topic = interface_cfg.get("agent_event_topic", "/agent_event")
         self._loop = loop
         self._input_queue = asyncio.Queue()
         self._to_human_pub = self._node.create_publisher(String, to_topic, 10)
+        self._agent_event_pub = self._node.create_publisher(String, agent_event_topic, 10)
 
         def _on_from_human(msg: String) -> None:
             text = msg.data.strip()
             if not text or self._loop is None or self._input_queue is None:
                 return
+            logger.info(f"[/from_human] {text}")
             if self._is_emergency(text) and self._tools is not None:
                 get_state().stop_event.set()
                 self._tools._robot.stop()
@@ -257,10 +291,19 @@ class DemoRunner:
         self._node.create_subscription(String, from_topic, _on_from_human, 10)
         logger.info(f"デモ入力: {from_topic} (std_msgs/String)")
         logger.info(f"デモ応答: {to_topic} (std_msgs/String)")
+        logger.info(f"エージェントイベント: {agent_event_topic} (std_msgs/String)")
 
     def _publish_to_human(self, text: str) -> None:
         if self._to_human_pub is not None:
+            logger.info(f"[/to_human] {text}")
             self._to_human_pub.publish(String(data=text))
+
+    def _publish_agent_event(self, event: dict) -> None:
+        if self._agent_event_pub is not None:
+            import json as _json  # noqa: PLC0415
+            payload = _json.dumps(event, ensure_ascii=False)
+            logger.info(f"[/agent_event] {payload}")
+            self._agent_event_pub.publish(String(data=payload))
 
     def _collect_camera_image_if_needed(
         self, demo_cmd: DemoCommand, tools, step: int, ts_str: str
@@ -306,6 +349,16 @@ class DemoRunner:
         tools = _build_tools(self._config, self._node)
         self._tools = tools
         self._setup_topic_io(asyncio.get_running_loop())
+
+        loop = asyncio.get_running_loop()
+
+        def _on_agent_event(event: dict) -> None:
+            loop.call_soon_threadsafe(
+                lambda: self._publish_agent_event(event)
+            )
+
+        tools.set_agent_event_callback(_on_agent_event)
+
         runner, session_id = await _setup_adk(self._config, tools)
         recorder, video_path, record_start_time = _start_recorder(self._debug, self._debug_dir)
 
@@ -327,7 +380,6 @@ class DemoRunner:
                 user_input = await self._input_queue.get()
                 step += 1
                 demo_cmd = DEMO_COMMAND_BY_TEXT.get(user_input, DemoCommand(user_input, ""))
-                logger.info(f"[{step}] 入力: {demo_cmd.ja!r}")
                 state.stop_event.clear()
                 tools.clear_tool_call_log()
                 cmd_start = datetime.datetime.now().timestamp()
@@ -336,12 +388,15 @@ class DemoRunner:
                     state.stop_event.set()
                     tools._robot.stop()
                     response = "停止しました。"
+                    self._publish_to_human(response)
                 else:
-                    response = await _run_command(runner, session_id, user_input)
+                    response = await _run_command(
+                        runner, session_id, user_input,
+                        on_text=self._publish_to_human,
+                    )
                 cmd_end = datetime.datetime.now().timestamp()
                 tool_calls = tools.get_tool_call_log()
-                logger.info(f"応答: {response}")
-                self._publish_to_human(response)
+                self._publish_agent_event({"type": "action_completed", "response": response})
 
                 self._collect_camera_image_if_needed(demo_cmd, tools, step, ts_str)
 
