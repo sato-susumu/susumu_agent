@@ -7,6 +7,7 @@ class DemoCommand(NamedTuple):
     ja: str
     en: str
     interrupt_after_sec: float = 0.0
+    interrupt_text: str = "ストップ"
 
 
 DEMO_COMMANDS: list[DemoCommand] = [
@@ -19,7 +20,13 @@ DEMO_COMMANDS: list[DemoCommand] = [
     DemoCommand(
         "正方形を描いて。1辺は素早く3秒で移動すること",
         "Draw a square fast (3 sec per side)",
-        interrupt_after_sec=5.0,
+        interrupt_after_sec=3.0,
+    ),
+    DemoCommand(
+        "くるっと回って",
+        "Spin around",
+        interrupt_after_sec=1.0,
+        interrupt_text="前進して",
     ),
 ]
 
@@ -27,4 +34,5 @@ DEMO_COMMANDS: list[DemoCommand] = [
 DEMO_COMMAND_BY_TEXT = {
     **{cmd.ja: cmd for cmd in DEMO_COMMANDS},
     "ストップ": DemoCommand("ストップ", "Stop"),
+    "前進して": DemoCommand("前進して", "Move forward"),
 }

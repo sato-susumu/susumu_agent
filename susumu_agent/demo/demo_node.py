@@ -208,6 +208,13 @@ async def _setup_adk(config: dict, tools) -> tuple:
     return runner, session_id
 
 
+async def _watch_interrupt(queue: asyncio.Queue, state) -> None:
+    """コマンド実行中に次の入力が来たら stop_event をセットして動作を中断する。"""
+    item = await queue.get()
+    state.stop_event.set()
+    await queue.put(item)
+
+
 # ------------------------------------------------------------------ per-command execution
 
 async def _run_command(
@@ -390,10 +397,16 @@ class DemoRunner:
                     response = "停止しました。"
                     self._publish_to_human(response)
                 else:
-                    response = await _run_command(
-                        runner, session_id, user_input,
-                        on_text=self._publish_to_human,
+                    watcher = asyncio.ensure_future(
+                        _watch_interrupt(self._input_queue, state)
                     )
+                    try:
+                        response = await _run_command(
+                            runner, session_id, user_input,
+                            on_text=self._publish_to_human,
+                        )
+                    finally:
+                        watcher.cancel()
                 cmd_end = datetime.datetime.now().timestamp()
                 tool_calls = tools.get_tool_call_log()
                 self._publish_agent_event({"type": "action_completed", "response": response})

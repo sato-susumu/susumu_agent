@@ -69,7 +69,7 @@ class ROS2Robot(RobotInterface):
         state.set_twist(linear, 0.0)
         interval = 0.1
         elapsed = 0.0
-        while elapsed < duration_sec:
+        while elapsed < duration_sec and not state.stop_event.is_set():
             self._publish(linear, 0.0)
             await asyncio.sleep(interval)
             elapsed += interval
@@ -87,7 +87,7 @@ class ROS2Robot(RobotInterface):
         state.set_twist(0.0, angular)
         interval = 0.1
         elapsed = 0.0
-        while elapsed < duration_sec:
+        while elapsed < duration_sec and not state.stop_event.is_set():
             self._publish(0.0, angular)
             await asyncio.sleep(interval)
             elapsed += interval

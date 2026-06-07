@@ -36,7 +36,11 @@ class MockRobot(RobotInterface):
         if not self._dry_run:
             state.set_twist(linear, 0.0)
 
-        await asyncio.sleep(duration_sec)
+        interval = 0.1
+        elapsed = 0.0
+        while elapsed < duration_sec and not state.stop_event.is_set():
+            await asyncio.sleep(interval)
+            elapsed += interval
 
         logger.info(f"[MockRobot] {direction} 完了 → 停止")
         if not self._dry_run:
@@ -54,7 +58,11 @@ class MockRobot(RobotInterface):
         if not self._dry_run:
             state.set_twist(0.0, angular)
 
-        await asyncio.sleep(duration_sec)
+        interval = 0.1
+        elapsed = 0.0
+        while elapsed < duration_sec and not state.stop_event.is_set():
+            await asyncio.sleep(interval)
+            elapsed += interval
 
         logger.info("[MockRobot] rotate 完了 → 停止")
         if not self._dry_run:
