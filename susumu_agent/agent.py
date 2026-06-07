@@ -48,13 +48,11 @@ class AgentFactory:
         iface_cfg = self._config.get("interface", {})
 
         model = llm_cfg.get("model", "gemini-2.5-flash")
-        if not llm_cfg.get("model_locked", False):
-            model = os.environ.get("ROBOT_MODEL", model)
 
         project = os.environ.get("GOOGLE_CLOUD_PROJECT") or llm_cfg.get("project", "")
         if project:
             os.environ["GOOGLE_CLOUD_PROJECT"] = project
-        location = os.environ.get("GOOGLE_CLOUD_LOCATION") or llm_cfg.get("location", "asia-northeast1")
+        location = llm_cfg.get("location", "asia-northeast1")
         os.environ["GOOGLE_CLOUD_LOCATION"] = location
         os.environ["GOOGLE_GENAI_USE_VERTEXAI"] = "TRUE"
 

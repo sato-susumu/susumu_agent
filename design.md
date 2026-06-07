@@ -366,12 +366,10 @@ flowchart LR
 
 ```dotenv
 GOOGLE_CLOUD_PROJECT=your-project-id
-GOOGLE_CLOUD_LOCATION=us-central1
-ROBOT_MODEL=gemini-2.5-flash
 ```
 
 `agent.py` が `load_dotenv()` で読み込み、`GOOGLE_GENAI_USE_VERTEXAI=TRUE` は自動設定される。  
-`.env` は `.gitignore` で除外。
+モデルやリージョンなどその他の設定は `config.yaml` で管理する。`.env` は `.gitignore` で除外。
 
 ### 5.3 ツール定義（⚡ 型安全化・rotate_robot 分離）
 
@@ -789,7 +787,7 @@ robot:
 llm:
   model: "claude-sonnet-4-5@20250514"
   project: "your-project-id"
-  location: "us-central1"
+  location: "asia-northeast1"
 ```
 
 ### 15.2 変更時の影響局所化
@@ -1189,7 +1187,7 @@ robot:
 2. Layer3 ゴールデンテスト（`tests/golden/run_golden.py`）を実行
 3. 全件パスで `config.yaml` に反映。失敗時はプロンプト調整またはロールバック
 
-`llm.model_locked: true` で環境変数による上書きを無効化可能。
+モデルは `config.yaml` の `llm.model` のみで管理する。
 
 ---
 
@@ -1444,9 +1442,8 @@ robot:
 
 llm:
   model: "claude-sonnet-4-5@20250514"
-  model_locked: true
   project: "your-project-id"
-  location: "us-central1"
+  location: "asia-northeast1"
   backend: "vertex_ai"
   timeout_sec: 5
   timeout_observe_sec: 10
@@ -1475,7 +1472,7 @@ cost_control:
 
 | 項目 | 状態 | アクション |
 |---|---|---|
-| Vertex AI 利用可能なモデル文字列 | 未確定 | 実装時 `gcloud ai models list --region=us-central1` で確認後 config.yaml に記載 |
+| Vertex AI 利用可能なモデル文字列 | 未確定 | 実装時 `gcloud ai models list --region=asia-northeast1` で確認後 config.yaml に記載 |
 | ADK の multimodal tool_result の具体的な書き方 | 要調査 | ADK v2.1.0 ドキュメント確認 |
 | runner.run_async / run_live の API | 要調査 | ADK v2.1.0 ドキュメント確認 |
 | 顔検出ブラーの精度・パフォーマンス | 要検証 | OpenCV の軽量モデル選定 |
