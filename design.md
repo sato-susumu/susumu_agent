@@ -281,7 +281,7 @@ flowchart TD
 | Watchdog | `watchdog.py` | 無通信タイムアウト監視・自動停止 |
 | カメラ取得 | `camera.py` | Image Subscriber・base64変換・鮮度チェック |
 | 能力・定数定義 | `capabilities.py` | 速度定数・システムプロンプト自動生成 |
-| 依存定義 | `requirements.txt` | pip インストール可能なパッケージのみ |
+| 依存定義 | `pyproject.toml` | uv で管理、`uv sync` でインストール |
 
 ---
 
@@ -583,7 +583,7 @@ susumu_agent/
 ├── .env                      # 認証情報（gitignore 対象）
 ├── .env.sample               # .env テンプレート
 ├── debug/                    # デバッグ出力先（gitignore 対象）
-├── requirements.txt          # pip インストール可能パッケージ
+├── pyproject.toml            # 依存定義（uv 管理）
 ├── launch/
 │   ├── mock.launch.py
 │   ├── mock_debug.launch.py
@@ -810,8 +810,7 @@ susumu_agent/
 ├── watchdog.py               # 無通信タイムアウト監視
 ├── camera.py                 # Image Subscriber・鮮度チェック
 ├── capabilities.py           # 速度定数・バリデーション・プロンプト自動生成
-├── requirements.txt          # pip 可能パッケージのみ
-├── requirements-dev.txt      # pytest・mock
+├── pyproject.toml            # 依存定義（uv 管理）
 └── voice/
     ├── recognizer.py
     └── synthesizer.py
@@ -1104,8 +1103,7 @@ susumu_agent/
 ├── camera.py                 # Image Subscriber・遅延起動・鮮度チェック
 ├── capabilities.py           # 速度定数・バリデーション・プロンプト自動生成
 ├── session_store.py          # セッション履歴 JSONL 読み書き
-├── requirements.txt          # pip 可能パッケージのみ
-├── requirements-dev.txt      # pytest・mock
+├── pyproject.toml            # 依存定義（uv 管理）
 ├── launch/
 │   └── turtlesim_demo.launch.py    # ROS2 launch ファイル
 ├── deploy/
@@ -1259,8 +1257,8 @@ interface:
 
 ## 44. 依存関係管理（⚡ 26周目追加）
 
-- `requirements.txt` はメジャーバージョン上限付き（例: `google-adk>=2.1.0,<3.0.0`）
-- `requirements.lock` で再現可能ビルドを保証
+- `pyproject.toml` にメジャーバージョン上限付きで依存を定義（例: `google-adk>=2.1.0,<3.0.0`）
+- `uv.lock` で再現可能ビルドを保証
 - 週1回 `pip-audit` でセキュリティ脆弱性チェック
 
 ---
