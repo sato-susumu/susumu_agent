@@ -4,7 +4,7 @@ import asyncio
 
 from loguru import logger
 
-from susumu_agent.capabilities import SPEED_MAP, angle_to_duration, clamp_duration
+from susumu_agent.capabilities import SPEED_MAP, angle_to_duration, clamp_angle, clamp_duration
 from susumu_agent.shared_state import get_state
 
 from .interface import Direction, RobotInterface, SpeedLevel
@@ -43,7 +43,6 @@ class MockRobot(RobotInterface):
             state.zero_twist()
 
     async def rotate(self, angle_deg: float, speed: SpeedLevel) -> None:
-        from susumu_agent.capabilities import clamp_angle
         angle_deg = clamp_angle(angle_deg)
         angular = SPEED_MAP[speed]["angular"]
         if angle_deg < 0:

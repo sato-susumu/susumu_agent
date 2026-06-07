@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import base64
 from typing import Literal
+
+from google.genai import types as genai_types
+from loguru import logger
 
 from susumu_agent.capabilities import (
     SPEED_MAP,
@@ -17,6 +21,19 @@ class RobotTools:
         self._camera = camera
         self._session_store = session_store
         self._macro_store = macro_store
+        self._tool_call_log: list[str] = []
+        self._pending_image_parts: list[genai_types.Part] = []
+
+    def clear_tool_call_log(self) -> None:
+        self._tool_call_log.clear()
+
+    def get_tool_call_log(self) -> list[str]:
+        return list(self._tool_call_log)
+
+    def pop_pending_image_parts(self) -> list[genai_types.Part]:
+        parts = self._pending_image_parts
+        self._pending_image_parts = []
+        return parts
 
     async def move_robot(
         self,
@@ -32,6 +49,9 @@ class RobotTools:
             duration_sec: 継続時間（秒）。0.1〜30.0。stop の場合は無視される。
         """
         duration_sec = clamp_duration(duration_sec)
+        msg = f"move_robot(direction={direction!r}, speed={speed!r}, duration_sec={duration_sec})"
+        logger.info(f"[tool] {msg}")
+        self._tool_call_log.append(msg)
         state = get_state()
         state.last_command = {"tool": "move_robot", "direction": direction,
                                "speed": speed, "duration_sec": duration_sec}
@@ -57,6 +77,9 @@ class RobotTools:
         """
         angle_deg = clamp_angle(angle_deg)
         duration_sec = angle_to_duration(angle_deg, speed)
+        msg = f"rotate_robot(angle_deg={angle_deg}, speed={speed!r})"
+        logger.info(f"[tool] {msg}")
+        self._tool_call_log.append(msg)
         state = get_state()
         state.last_command = {"tool": "rotate_robot", "angle_deg": angle_deg, "speed": speed}
         self._session_store.append_command_log({"event": "tool_call", "tool": "rotate_robot",
@@ -79,10 +102,14 @@ class RobotTools:
         state = get_state()
         total = len(steps)
         completed = 0
+        msg = f"execute_sequence(total_steps={total})"
+        logger.info(f"[tool] {msg}")
+        self._tool_call_log.append(msg)
         self._session_store.append_command_log({"event": "tool_call", "tool": "execute_sequence",
                                                 "total_steps": total})
         for step in steps:
             if state.stop_event.is_set():
+                logger.info(f"[tool] execute_sequence 中断（{completed}/{total} 完了）")
                 return {"status": "interrupted", "completed_steps": completed, "total": total}
             if step.get("type") == "rotate":
                 await self.rotate_robot(
@@ -103,28 +130,38 @@ class RobotTools:
         question: str,
         sensor: Literal["camera"] = "camera",
     ) -> dict:
-        """カメラで前方を撮影し、画像データを返す。Claude が内容を解析する。
+        """カメラで前方を撮影し、画像データを返す。LLM が内容を解析する。
 
         Args:
             question: カメラ画像について尋ねる質問。
             sensor: 使用するセンサー（現在は camera のみ対応）。
         """
+        msg = f"observe(question={question!r}, sensor={sensor!r})"
+        logger.info(f"[tool] {msg}")
+        self._tool_call_log.append(msg)
         result = self._camera.get_latest_image()
         if result["status"] != "ok":
+            logger.warning(f"[tool] observe: カメラ取得失敗 status={result['status']}")
             return result
-        return {
-            "status": "ok",
-            "question": question,
-            "image_base64": result["image_base64"],
-            "note": result.get("note", ""),
-        }
+        image_base64 = result["image_base64"]
+        logger.info(f"[tool] observe: 画像取得成功（{len(image_base64)} bytes base64）")
+        # 画像パートを pending に保持し、before_model_callback で LLM リクエストに追加する
+        # （state 経由だと InMemorySessionService の deepcopy で大きなバイナリが毎回コピーされハングする）
+        image_bytes = base64.b64decode(image_base64)
+        self._pending_image_parts = [
+            genai_types.Part(text=f"カメラ画像を取得しました。質問: {question}"),
+            genai_types.Part(inline_data=genai_types.Blob(data=image_bytes, mime_type="image/jpeg")),
+        ]
+        return {"status": "ok", "question": question, "note": result.get("note", "")}
 
     def query_status(self) -> dict:
         """現在のロボットの移動状態を返す。"""
+        logger.info("[tool] query_status()")
         return self._robot.get_status()
 
     def query_last_command(self) -> dict:
         """直前に実行したコマンドの内容を返す。"""
+        logger.info("[tool] query_last_command()")
         state = get_state()
         if state.last_command is None:
             return {"status": "none", "message": "まだコマンドを実行していません"}
@@ -143,6 +180,7 @@ class RobotTools:
             name: マクロ名（list 以外で必要）。
             steps: 登録するステップ（register のみ）。
         """
+        logger.info(f"[tool] manage_macro(action={action!r}, name={name!r})")
         if action == "list":
             return {"status": "ok", "macros": self._macro_store.list_macros()}
         if action == "register":
@@ -167,6 +205,7 @@ class RobotTools:
         Args:
             reason: できない理由の説明（日本語）。
         """
+        logger.warning(f"[tool] report_unsupported(reason={reason!r})")
         self._session_store.append_command_log({"event": "unsupported", "reason": reason})
         return {"status": "unsupported", "reason": reason}
 

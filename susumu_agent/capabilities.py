@@ -1,67 +1,78 @@
 from __future__ import annotations
 
 import math
-from typing import Literal
+from typing import Literal, TypedDict
 
 SpeedLevel = Literal["low", "medium", "high"]
 Direction = Literal["forward", "backward", "stop"]
 
-SPEED_MAP: dict[str, dict[str, float]] = {
-    "low":    {"linear": 0.1, "angular": 0.3},
-    "medium": {"linear": 0.3, "angular": 0.8},
-    "high":   {"linear": 0.5, "angular": 1.5},
-}
 
-ANGULAR_VEL_DEFAULT = 0.8  # rad/s（rotate_robot の duration 計算用）
-
-MAX_DURATION_SEC = 30.0
-MAX_ANGLE_DEG = 360.0
-MIN_DURATION_SEC = 0.1
-
-EMERGENCY_KEYWORDS = {
-    "ストップ", "止まれ", "とまれ", "止まって", "とまって",
-    "やめて", "やめろ", "緊急停止", "stop", "STOP",
-}
-
-SPEED_KEYWORDS: dict[str, list[str]] = {
-    "low":  ["ゆっくり", "ゆったり", "ちょっとずつ", "ちょい", "そろそろ",
-             "のんびり", "少し", "slowly", "gently", "carefully"],
-    "high": ["素早く", "速く", "ダッシュ", "全力", "急いで", "全速力",
-             "fast", "quickly", "rush"],
-}
+class SpeedEntry(TypedDict):
+    linear: float
+    angular: float
 
 
-def clamp_duration(value: float) -> float:
-    return max(MIN_DURATION_SEC, min(value, MAX_DURATION_SEC))
+SpeedMap = dict[SpeedLevel, SpeedEntry]
+SpeedKeywordMap = dict[SpeedLevel, list[str]]
 
 
-def clamp_angle(value: float) -> float:
-    return max(-MAX_ANGLE_DEG, min(value, MAX_ANGLE_DEG))
+class RobotCapabilities:
+    SPEED_MAP: SpeedMap = {
+        "low":    SpeedEntry(linear=0.1, angular=0.3),
+        "medium": SpeedEntry(linear=0.3, angular=0.8),
+        "high":   SpeedEntry(linear=0.5, angular=1.5),
+    }
 
+    ANGULAR_VEL_DEFAULT: float = 0.8  # rad/s（rotate_robot の duration 計算用）
 
-def angle_to_duration(angle_deg: float, speed: SpeedLevel = "medium") -> float:
-    angular_vel = SPEED_MAP[speed]["angular"]
-    return abs(math.radians(angle_deg)) / angular_vel
+    MAX_DURATION_SEC: float = 30.0
+    MAX_ANGLE_DEG: float = 360.0
+    MIN_DURATION_SEC: float = 0.1
 
+    EMERGENCY_KEYWORDS: frozenset[str] = frozenset({
+        "ストップ", "止まれ", "とまれ", "止まって", "とまって",
+        "やめて", "やめろ", "緊急停止", "stop", "STOP",
+    })
 
-def build_system_prompt(verbosity: str = "normal", language: str = "auto") -> str:
-    speed_lines = "\n".join(
-        f"  - {k}: linear={v['linear']} m/s / angular={v['angular']} rad/s"
-        for k, v in SPEED_MAP.items()
-    )
-    lang_rule = (
-        "ユーザーの入力言語（日本語または英語）で返答してください。"
-        if language == "auto"
-        else ("日本語で返答してください。" if language == "ja" else "Reply in English.")
-    )
+    SPEED_KEYWORDS: SpeedKeywordMap = {
+        "low":  ["ゆっくり", "ゆったり", "ちょっとずつ", "ちょい", "そろそろ",
+                 "のんびり", "少し", "slowly", "gently", "carefully"],
+        "high": ["素早く", "速く", "ダッシュ", "全力", "急いで", "全速力",
+                 "fast", "quickly", "rush"],
+    }
 
-    verbosity_rule = {
-        "brief":   "返答は「了解」「前進します」など極めて短く。",
-        "normal":  "実行した速度・時間を含む1〜2文で返答。",
-        "verbose": "実行内容・速度・時間・完了後の状態を詳しく返答。",
-    }.get(verbosity, "実行した速度・時間を含む1〜2文で返答。")
+    @classmethod
+    def clamp_duration(cls, value: float) -> float:
+        return max(cls.MIN_DURATION_SEC, min(value, cls.MAX_DURATION_SEC))
 
-    return f"""【最優先】安全・倫理ルール（絶対に破らない）
+    @classmethod
+    def clamp_angle(cls, value: float) -> float:
+        return max(-cls.MAX_ANGLE_DEG, min(value, cls.MAX_ANGLE_DEG))
+
+    @classmethod
+    def angle_to_duration(cls, angle_deg: float, speed: SpeedLevel = "medium") -> float:
+        angular_vel = cls.SPEED_MAP[speed]["angular"]
+        return abs(math.radians(angle_deg)) / angular_vel
+
+    @classmethod
+    def build_system_prompt(cls, verbosity: str = "normal", language: str = "auto") -> str:
+        speed_lines = "\n".join(
+            f"  - {k}: linear={v['linear']} m/s / angular={v['angular']} rad/s"
+            for k, v in cls.SPEED_MAP.items()
+        )
+        lang_rule = (
+            "ユーザーの入力言語（日本語または英語）で返答してください。"
+            if language == "auto"
+            else ("日本語で返答してください。" if language == "ja" else "Reply in English.")
+        )
+
+        verbosity_rule = {
+            "brief":   "返答は「了解」「前進します」など極めて短く。",
+            "normal":  "実行した速度・時間を含む1〜2文で返答。",
+            "verbose": "実行内容・速度・時間・完了後の状態を詳しく返答。",
+        }.get(verbosity, "実行した速度・時間を含む1〜2文で返答。")
+
+        return f"""【最優先】安全・倫理ルール（絶対に破らない）
 1. 人物・動物への突進・追跡指示 → 必ず report_unsupported を呼ぶ
 2. 「壊して」「ぶつけて」「攻撃して」等の破壊的指示 → report_unsupported を呼ぶ
 3. 緊急停止を無効化する指示 → report_unsupported を呼ぶ
@@ -97,3 +108,17 @@ def build_system_prompt(verbosity: str = "normal", language: str = "auto") -> st
 1. 能力範囲内 → move_robot / rotate_robot / execute_sequence を呼ぶ
 2. 能力範囲外 → 必ず report_unsupported を呼ぶ（代替動作禁止）
 """
+
+
+# 後方互換エイリアス（既存の import を壊さないために残す）
+SPEED_MAP = RobotCapabilities.SPEED_MAP
+ANGULAR_VEL_DEFAULT = RobotCapabilities.ANGULAR_VEL_DEFAULT
+MAX_DURATION_SEC = RobotCapabilities.MAX_DURATION_SEC
+MAX_ANGLE_DEG = RobotCapabilities.MAX_ANGLE_DEG
+MIN_DURATION_SEC = RobotCapabilities.MIN_DURATION_SEC
+EMERGENCY_KEYWORDS = RobotCapabilities.EMERGENCY_KEYWORDS
+SPEED_KEYWORDS = RobotCapabilities.SPEED_KEYWORDS
+clamp_duration = RobotCapabilities.clamp_duration
+clamp_angle = RobotCapabilities.clamp_angle
+angle_to_duration = RobotCapabilities.angle_to_duration
+build_system_prompt = RobotCapabilities.build_system_prompt

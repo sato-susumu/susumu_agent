@@ -49,6 +49,17 @@ def generate_launch_description():
         output="screen",
     )
 
+    # ダミーカメラ: image_tools/cam2image の burger_mode（著作権フリーのアニメ画像）を
+    # /camera/image_raw にリマップして配信する
+    dummy_camera_node = Node(
+        package="image_tools",
+        executable="cam2image",
+        name="dummy_camera",
+        output="screen",
+        parameters=[{"burger_mode": True, "publish_rate": 10.0}],
+        remappings=[("/image", "/camera/image_raw")],
+    )
+
     demo_node = Node(
         package="susumu_agent",
         executable="susumu_agent_demo",
@@ -78,6 +89,7 @@ def generate_launch_description():
         debug_dir_arg,
         LogInfo(msg="turtlesim エージェントデモ（デバッグモード）を起動します..."),
         turtlesim_node,
+        dummy_camera_node,
         TimerAction(
             period=2.0,
             actions=[

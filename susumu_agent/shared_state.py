@@ -19,7 +19,9 @@ class SharedState:
     shutdown_event: threading.Event = field(default_factory=threading.Event)
     last_command: dict | None = None
     last_command_time: float = field(default_factory=time.monotonic)
-    _is_active: bool = False  # IDLE/ACTIVE 切り替え用
+    _is_active: bool = False
+
+    _instance: SharedState | None = field(default=None, init=False, repr=False, compare=False)
 
     def set_twist(self, linear_x: float, angular_z: float) -> None:
         with self._lock:
@@ -45,13 +47,14 @@ class SharedState:
         with self._lock:
             return time.monotonic() - self.last_command_time
 
+    @classmethod
+    def instance(cls) -> SharedState:
+        """プロセス内シングルトンを返す。"""
+        if not hasattr(cls, "_singleton") or cls._singleton is None:
+            cls._singleton = cls()
+        return cls._singleton
 
-# プロセス内シングルトン
-_state: SharedState | None = None
 
-
+# 後方互換エイリアス
 def get_state() -> SharedState:
-    global _state
-    if _state is None:
-        _state = SharedState()
-    return _state
+    return SharedState.instance()

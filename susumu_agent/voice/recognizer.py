@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 
 
@@ -16,6 +17,5 @@ class StdinRecognizer(BaseRecognizer):
     """テスト用：標準入力をそのまま返すフォールバック実装。"""
 
     async def recognize(self) -> str:
-        import asyncio
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, input)

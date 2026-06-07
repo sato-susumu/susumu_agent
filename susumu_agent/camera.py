@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import base64
+import threading
 import time
+
+from loguru import logger
 
 
 class CameraClient:
@@ -11,23 +14,42 @@ class CameraClient:
     real モードでは ROS2 Image トピックを購読する。
     """
 
-    def __init__(self, image_topic: str = "/camera/image_raw", mode: str = "simulate"):
+    def __init__(
+        self,
+        image_topic: str = "/camera/image_raw",
+        mode: str = "simulate",
+        node=None,
+    ):
         self._topic = image_topic
         self._mode = mode
         self._last_frame: bytes | None = None
         self._last_time: float = 0.0
+        self._lock = threading.Lock()
         self._stale_threshold = 1.0  # 秒
-        self._subscriber = None
 
-        if mode == "real":
-            self._init_ros2()
+        if mode == "real" and node is not None:
+            self._init_ros2(node)
 
-    def _init_ros2(self) -> None:
+    def _init_ros2(self, node) -> None:
         try:
-            import rclpy  # noqa: F401
-            from rclpy.node import Node  # noqa: F401
-            from sensor_msgs.msg import Image  # noqa: F401
-            # 実装時に Node を外部から受け取る形に変更すること
+            import cv2  # noqa: PLC0415
+            from cv_bridge import CvBridge  # noqa: PLC0415
+            from sensor_msgs.msg import Image  # noqa: PLC0415
+            bridge = CvBridge()
+
+            def _callback(msg: Image) -> None:
+                try:
+                    cv_img = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+                    ok, buf = cv2.imencode(".jpg", cv_img, [cv2.IMWRITE_JPEG_QUALITY, 80])
+                    if ok:
+                        with self._lock:
+                            self._last_frame = buf.tobytes()
+                            self._last_time = time.time()
+                except Exception as exc:
+                    # ROS2 サブスクリプション callback が例外で死ぬとトピック受信が止まるため捕捉する
+                    logger.warning(f"camera callback error: {exc}")
+
+            node.create_subscription(Image, self._topic, _callback, 10)
         except ImportError:
             self._mode = "simulate"
 
@@ -56,13 +78,16 @@ class CameraClient:
         }
 
     def _get_ros2_image(self) -> dict:
-        if self._last_frame is None:
+        with self._lock:
+            frame = self._last_frame
+            last_time = self._last_time
+        if frame is None:
             return {"status": "error", "reason": "カメラトピック未受信"}
-        age = time.time() - self._last_time
+        age = time.time() - last_time
         if age > self._stale_threshold:
             return {"status": "stale", "reason": f"最新フレームを取得できません（{age:.1f}秒前）"}
         return {
             "status": "ok",
-            "image_base64": base64.b64encode(self._last_frame).decode(),
-            "timestamp": self._last_time,
+            "image_base64": base64.b64encode(frame).decode(),
+            "timestamp": last_time,
         }

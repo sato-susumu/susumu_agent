@@ -20,16 +20,27 @@ class TurtlesimRecorder:
         self._thread: threading.Thread | None = None
 
     def _find_window_geometry(self) -> str:
+        # xwininfo を優先して使用（描画領域の正確な座標を返す）
         try:
-            out = subprocess.check_output(["wmctrl", "-lG"], text=True, timeout=5)
+            out = subprocess.check_output(
+                ["xwininfo", "-name", self._WINDOW_NAME], text=True, timeout=5
+            )
+            vals: dict[str, int] = {}
             for line in out.splitlines():
-                if self._WINDOW_NAME.lower() in line.lower():
-                    parts = line.split()
-                    x, y, w, h = int(parts[2]), int(parts[3]), int(parts[4]), int(parts[5])
-                    w = w if w % 2 == 0 else w - 1
-                    h = h if h % 2 == 0 else h - 1
-                    return f"{w}x{h}+{x}+{y}"
-        except Exception:
+                line = line.strip()
+                if line.startswith("Absolute upper-left X:"):
+                    vals["x"] = int(line.split()[-1])
+                elif line.startswith("Absolute upper-left Y:"):
+                    vals["y"] = int(line.split()[-1])
+                elif line.startswith("Width:"):
+                    vals["w"] = int(line.split()[-1])
+                elif line.startswith("Height:"):
+                    vals["h"] = int(line.split()[-1])
+            if len(vals) == 4:
+                w = vals["w"] if vals["w"] % 2 == 0 else vals["w"] - 1
+                h = vals["h"] if vals["h"] % 2 == 0 else vals["h"] - 1
+                return f"{w}x{h}+{vals['x']}+{vals['y']}"
+        except (OSError, subprocess.TimeoutExpired, ValueError):
             pass
         return self._FALLBACK_GEOMETRY
 
@@ -61,7 +72,7 @@ class TurtlesimRecorder:
             try:
                 self._proc.stdin.write(b"q")
                 self._proc.stdin.flush()
-            except Exception:
+            except OSError:
                 self._proc.terminate()
         if self._thread:
             self._thread.join(timeout=10)
