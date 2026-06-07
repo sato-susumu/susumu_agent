@@ -32,8 +32,6 @@ from susumu_agent.agent.tools import RobotTools
 from susumu_agent.business.capabilities import EMERGENCY_KEYWORDS
 from susumu_agent.demo.commands import DEMO_COMMAND_BY_TEXT, DemoCommand
 from susumu_agent.demo.recorder import TurtlesimRecorder
-from susumu_agent.business.watchdog import Watchdog
-
 _MIN_SUBTITLE_DURATION_SEC = 2.0
 
 try:
@@ -195,7 +193,6 @@ def _build_tools(config: dict, node: Node):
         session_store=SessionStore(),
         macro_store=MacroStore(),
     )
-    Watchdog(timeout_sec=config.get("robot", {}).get("watchdog_timeout_sec", 5.0)).start()
     return tools
 
 

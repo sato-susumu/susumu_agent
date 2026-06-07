@@ -27,8 +27,6 @@ from susumu_agent.logging.ros_logger import setup_loguru
 from susumu_agent.storage.session_store import SessionStore
 from susumu_agent.business.shared_state import get_state
 from susumu_agent.agent.tools import RobotTools
-from susumu_agent.business.watchdog import Watchdog
-
 try:
     from dotenv import load_dotenv
     _DOTENV_AVAILABLE = True
@@ -128,8 +126,6 @@ class RobotController:
             session_store=SessionStore(),
             macro_store=MacroStore(),
         )
-        Watchdog(timeout_sec=robot_cfg.get("watchdog_timeout_sec", 5.0)).start()
-
     async def _setup_adk(self) -> None:
         self._agent = AgentFactory(self._config).create_agent(
             self._tools.get_all_tools(), tools_instance=self._tools

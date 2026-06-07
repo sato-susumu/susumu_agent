@@ -57,8 +57,7 @@ python3 -m susumu_agent.cli.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel 
 susumu_agent/
 ├── business/   # ビジネスロジック中核（ROS2・ADK 依存ゼロ）
 │   ├── capabilities.py   # 速度定数・キーワード（RobotCapabilities クラス）
-│   ├── shared_state.py   # SharedState シングルトン
-│   └── watchdog.py       # 安全監視スレッド
+│   └── shared_state.py   # SharedState シングルトン
 ├── agent/      # LLM エージェント層
 │   ├── factory.py        # AgentFactory / LlmAgent 定義
 │   ├── tools.py          # RobotTools（8ツール実装）
