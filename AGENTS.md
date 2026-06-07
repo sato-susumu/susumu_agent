@@ -148,7 +148,7 @@ GOOGLE_CLOUD_PROJECT=your-project-id
 
 ### スレッド安全性
 
-`susumu_agent/business/shared_state.py` の `SharedState` シングルトン（`get_state()`）が状態を一元管理する。`stop_event`（緊急停止）と `shutdown_event`（終了）は `threading.Event` で実装されており、Watchdog スレッドと async ループの両方から安全にアクセスできる。
+`susumu_agent/business/shared_state.py` の `SharedState` シングルトン（`get_state()`）が状態を一元管理する。`stop_event`（緊急停止）と `shutdown_event`（終了）は `threading.Event` で実装されており、デモ feeder スレッドと async ループの両方から安全にアクセスできる。
 
 ## モデル設定
 

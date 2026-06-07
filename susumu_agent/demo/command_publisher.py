@@ -25,7 +25,8 @@ class DemoCommandPublisher:
     ) -> None:
         self._node = node
         self._pub = node.create_publisher(String, from_human_topic, 10)
-        self._completed_event = threading.Event()
+        self._main_event = threading.Event()
+        self._interrupt_event = threading.Event()
         self._response_timeout_sec = response_timeout_sec
         self._interval_sec = interval_sec
         self._final_hold_sec = final_hold_sec
@@ -53,7 +54,8 @@ class DemoCommandPublisher:
                     self._interrupt_thread = threading.Thread(target=self._delayed_interrupt, daemon=True)
                     self._interrupt_thread.start()
         if event_type == "action_completed":
-            self._completed_event.set()
+            self._main_event.set()
+            self._interrupt_event.set()
 
     def _delayed_interrupt(self) -> None:
         time.sleep(self._interrupt_delay_sec)
@@ -63,18 +65,17 @@ class DemoCommandPublisher:
             self._publish_and_wait(text)
 
     def _publish_and_wait(self, text: str) -> None:
-        self._completed_event.clear()
+        self._interrupt_event.clear()
         logger.info(f"[/from_human] {text}")
         self._pub.publish(String(data=text))
-        if not self._completed_event.wait(self._response_timeout_sec):
+        if not self._interrupt_event.wait(self._response_timeout_sec):
             logger.warning(f"完了待ちがタイムアウトしました: {text}")
-        self._completed_event.clear()
         time.sleep(self._interval_sec)
 
     def run(self) -> None:
         time.sleep(1.0)
         for demo_cmd in DEMO_COMMANDS:
-            self._completed_event.clear()
+            self._main_event.clear()
             if demo_cmd.interrupt_after_sec > 0:
                 self._pending_interrupt_text = demo_cmd.interrupt_text
                 self._interrupt_delay_sec = demo_cmd.interrupt_after_sec
@@ -85,7 +86,7 @@ class DemoCommandPublisher:
                 self._interrupt_triggered = False
             logger.info(f"[/from_human] {demo_cmd.ja}")
             self._pub.publish(String(data=demo_cmd.ja))
-            if not self._completed_event.wait(self._response_timeout_sec):
+            if not self._main_event.wait(self._response_timeout_sec):
                 logger.warning(f"完了待ちがタイムアウトしました: {demo_cmd.ja}")
             if self._interrupt_thread is not None:
                 self._interrupt_thread.join(timeout=self._response_timeout_sec)
