@@ -26,6 +26,7 @@ setup(
             "susumu_agent_debug = susumu_agent.cli.debug_tools:main",
             "susumu_agent_demo = susumu_agent.demo.demo_node:main",
             "susumu_agent_demo_feeder = susumu_agent.demo.command_publisher:main",
+            "susumu_agent_gui = susumu_agent.gui.input_panel:main",
         ],
     },
 )
