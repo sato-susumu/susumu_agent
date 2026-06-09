@@ -193,6 +193,10 @@ class InputPanelApp:
         btn_frame.pack(fill="x", **pad)
         ttk.Button(btn_frame, text="クリア", style="Big.TButton",
                    command=self._clear_selection).pack(side="left")
+        ttk.Button(btn_frame, text="リロード", style="Big.TButton",
+                   command=self._reshuffle_columns).pack(side="left", padx=(8, 0))
+        ttk.Button(btn_frame, text="ストップ", style="Big.TButton",
+                   command=self._send_stop).pack(side="left", padx=(8, 0))
         ttk.Button(btn_frame, text="送信 →", style="Big.TButton",
                    command=self._send_word_selection).pack(side="right")
 
@@ -286,6 +290,9 @@ class InputPanelApp:
     def _clear_selection(self) -> None:
         for i, var in enumerate(self._selected):
             var.set(self._current_words[i][0] if self._current_words[i] else "")
+
+    def _send_stop(self) -> None:
+        self._publish("ストップ")
 
     def _send_word_selection(self) -> None:
         text = self._preview_var.get().strip()

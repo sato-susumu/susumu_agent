@@ -146,7 +146,7 @@ class RobotController:
         runner = Runner(agent=self._agent, session_service=self._session_service, app_name="robot_nl")
         content = Content(role="user", parts=[Part(text=user_input)])
         result_text = ""
-        preannounce_text = ""
+        announced = False
         observed = False
         async for event in runner.run_async(
             user_id="operator", session_id=self._session_id, new_message=content,
@@ -154,22 +154,17 @@ class RobotController:
             if not event.content:
                 continue
             func_calls = event.get_function_calls()
-            has_tool_call = bool(func_calls)
             if any(fc.name == "observe" for fc in func_calls):
                 observed = True
             for part in event.content.parts:
                 if hasattr(part, "text") and part.text:
                     result_text += part.text
-                    if not preannounce_text and on_text is not None and has_tool_call:
-                        preannounce_text = part.text
+                    if not announced and on_text is not None and func_calls:
                         on_text(part.text)
-            if event.is_final_response() and on_text is not None:
+                        announced = True
+            if event.is_final_response() and observed and on_text is not None:
                 final_text = result_text.strip()
-                if observed and preannounce_text and final_text.startswith(preannounce_text):
-                    diff = final_text[len(preannounce_text):].strip()
-                    if diff:
-                        on_text(diff)
-                elif not preannounce_text and final_text:
+                if final_text:
                     on_text(final_text)
         return result_text
 
@@ -279,6 +274,7 @@ class RobotController:
         state,
         on_text: Callable[[str], None] | None = None,
     ) -> str | None:
+        state.stop_event.clear()
         if self._is_help(user_input):
             logger.info("\n" + self._WELCOME_MSG)
             return self._WELCOME_MSG
@@ -334,7 +330,6 @@ class RobotController:
         if self._tools is not None:
             self._tools.set_agent_event_callback(_on_agent_event)
 
-        self._publish_to_human(self._WELCOME_MSG)
         while not state.shutdown_event.is_set():
             user_input = await self._ros_input_queue.get()
             response = await self._process_user_input(

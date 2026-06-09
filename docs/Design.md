@@ -152,8 +152,8 @@ LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTool
 |---|---|---|
 | `speed` | `low` / `medium` / `high` のみ | ADK スキーマ違反で拒否 |
 | `direction` | `forward` / `backward` / `stop` のみ | ADK スキーマ違反で拒否 |
-| `duration_sec` | 0.1〜30.0 秒 | clamp（上限30秒） |
-| `angle_deg` | -360〜+360 度 | clamp |
+| `duration_sec` | `0.0`=継続 / `0.1〜30.0` 秒 | clamp（上限30秒）。`0.0` のみ特殊値 |
+| `angle_deg` | `-360〜+360` 度 / `0.0`=継続 | clamp。`0.0` のみ特殊値（継続旋回） |
 
 ---
 
@@ -175,7 +175,19 @@ LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTool
 | 「50cm前進」 | `duration = 0.5 / speed_linear` 秒 |
 | 「1メートル動いて」 | `duration = 1.0 / speed_linear` 秒 |
 | 「3歩分進んで」 | 1歩 = 0.5m として計算 |
-| 指定なし | `duration_sec = 2.0` |
+| 時間・距離の指定なし | `duration_sec = 0.0`（ストップ指示があるまで継続） |
+
+**旋回の方向・角度解釈：**
+
+| 入力 | `angle_deg` | 動作 |
+|---|---|---|
+| 「右を向いて」「右向け」 | `-90` | 右に90度で止まる |
+| 「左を向いて」「左向け」 | `90` | 左に90度で止まる |
+| 「後ろを向いて」「振り向いて」 | `180` | 180度で止まる |
+| 「45度回転」「90度旋回」など角度明示 | その角度 | 指定角度で止まる |
+| 「左旋回して」「くるくる回って」など角度なし | `0.0` | ストップ指示があるまで左回りで継続 |
+
+正値 = 左回り、負値 = 右回り。
 
 **コンテキスト参照：**
 
@@ -247,23 +259,35 @@ flowchart LR
 |---|---|---|---|
 | Subscribe | `/from_human` | `std_msgs/msg/String` | 人間から ADK へ渡す自然言語入力（ROS2 launch 時） |
 | Subscribe | `/camera/image_raw` | `sensor_msgs/msg/Image` | `observe()` 用のカメラ画像 |
-| Publish | `/to_human` | `std_msgs/msg/String` | ADK の最終応答のうち、人間に見せる文字列 |
+| Publish | `/to_human` | `std_msgs/msg/String` | ロボットの応答テキスト（下記仕様参照） |
 | Publish | `/cmd_vel` | `geometry_msgs/msg/Twist` | 速度指令（`cmd_vel_stamped: false`） |
 | Publish | `/cmd_vel` | `geometry_msgs/msg/TwistStamped` | タイムスタンプ付き速度指令（`cmd_vel_stamped: true`） |
 
 `robot.cmd_vel_stamped` は bool で、`true` の場合は `TwistStamped`、`false` の場合は `Twist` を publish する。launch ファイルの `cmd_vel_stamped` パラメータで上書きできる。
 
-ROS2 launch 経由では `input("あなた: ").strip()` を使わない。`cli/main.py` は launch から起動されたときに `interface.input_mode=ros2` として動作し、`/from_human` の `data` を ADK Runner へ渡す。ADK の final response から集めた文字列は `/to_human` に publish する。
+ROS2 launch 経由では `input("あなた: ").strip()` を使わない。`cli/main.py` は launch から起動されたときに `interface.input_mode=ros2` として動作し、`/from_human` の `data` を ADK Runner へ渡す。
+
+**`/to_human` 送信仕様：**
+
+コマンドの種類によって送信タイミングと回数が異なる。
+
+| コマンド種別 | 送信タイミング | 回数 | 内容 |
+|---|---|---|---|
+| 通常コマンド（移動・旋回・マクロ等） | ツール呼び出し直前（LLM の宣言テキスト） | 1回 | 「前進します」「右に旋回します」など |
+| `observe`（カメラ確認） | ① ツール呼び出し直前 | 2回 | ① 「カメラで確認します」など |
+| | ② LLM の最終応答（画像解析結果） | | ② 「前方に段差が見えます」など |
+| 緊急停止 | 即時 | 1回 | 「停止しました。」 |
+
+起動時に `/to_human` へのウェルカムメッセージは送信しない。
 
 **フィードバック：**
 
 | タイミング | 内容 |
 |---|---|
-| コマンド受信直後 | 「考え中...」 |
-| ツール実行開始時 | 「前進中（0.1 m/s）...」 |
-| ツール完了時 | 「前進しました（2秒間）」 |
-| 緊急停止時 | 「緊急停止しました」 |
-| エラー時 | 「エラー：{日本語説明}」 |
+| ツール呼び出し直前（LLM 宣言） | 「前進します」「右に旋回します」など |
+| observe 解析完了時 | 「前方に〜が見えます」など画像解析結果 |
+| 緊急停止時 | 「停止しました。」 |
+| エラー時 | エラー内容（LLM 応答内） |
 
 **起動時メッセージ：** `help` / 「ヘルプ」 で LLM を経由せず能力一覧を表示。
 
@@ -452,10 +476,12 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> 未セット
-    未セット --> セット済み : 緊急停止入力 / Watchdog
-    セット済み --> 未セット : zero_twist() 送信後に clear
+    未セット --> セット済み : 緊急停止キーワード受信 / Watchdog
+    セット済み --> 未セット : 次のコマンド処理開始時に clear（_process_user_input の先頭）
     セット済み --> [*] : プログラム終了
 ```
+
+緊急停止後は `stop_event` がセットされたままになるが、次のコマンドが `/from_human` に届いた時点で `_process_user_input` の先頭で `stop_event.clear()` を呼ぶため、通常コマンドは即座に動作を再開できる。緊急キーワードが来た場合のみ再度 `stop_event.set()` する。
 
 **シャットダウン順序：**
 

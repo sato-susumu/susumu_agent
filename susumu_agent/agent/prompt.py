@@ -42,9 +42,15 @@ def build_system_prompt(verbosity: str = "normal", language: str = "auto") -> st
 - 速度マッピング:
 {speed_lines}
 - 「ゆっくり/slowly」→ low、指定なし → medium、「速く/fast」→ high
-- 時間指定なし → duration_sec=2.0
+- 前進・後退で時間・距離の指定なし → duration_sec=0.0（ストップ指示があるまで継続）
+- 前進・後退で時間指定あり → その秒数を duration_sec に指定
 - 距離指定（「50cm」「1メートル」）→ duration = 距離 / speed_linear 秒
 - 「1歩」= 0.5m として計算
+- 旋回で角度指定あり（「45度」「90度」など）→ その角度を angle_deg に指定
+- 旋回で角度指定なし（「左旋回して」「くるくる回って」）→ angle_deg=0.0（ストップ指示があるまで継続、左回り）
+- 「右を向いて」「右向け」→ angle_deg=-90（右に90度）
+- 「左を向いて」「左向け」→ angle_deg=90（左に90度）
+- 「後ろを向いて」「振り向いて」→ angle_deg=180
 - 「さっきと同じ」→ query_last_command で直前コマンドを取得して再実行
 - 「逆方向」→ 直前の direction を反転
 - 条件付き指示（「〜なければ〜して」）→ report_unsupported

@@ -51,16 +51,17 @@ class RobotTools:
         self,
         direction: Literal["forward", "backward", "stop"],
         speed: Literal["low", "medium", "high"] = "medium",
-        duration_sec: float = 2.0,
+        duration_sec: float = 0.0,
     ) -> dict:
         """ロボットを前進・後退・停止させる。
 
         Args:
             direction: 移動方向。forward=前進、backward=後退、stop=停止。
             speed: 速度。low=ゆっくり、medium=標準、high=素早く。
-            duration_sec: 継続時間（秒）。0.1〜30.0。stop の場合は無視される。
+            duration_sec: 継続時間（秒）。0.0=ストップ指示があるまで継続、0.1〜30.0=指定秒数。stop の場合は無視。
         """
-        duration_sec = clamp_duration(duration_sec)
+        if duration_sec != 0.0:
+            duration_sec = clamp_duration(duration_sec)
         msg = f"move_robot(direction={direction!r}, speed={speed!r}, duration_sec={duration_sec})"
         logger.info(f"[tool] {msg}")
         self._tool_call_log.append(msg)
@@ -89,11 +90,13 @@ class RobotTools:
         """ロボットをその場で旋回させる。
 
         Args:
-            angle_deg: 回転角度（度）。正=左回り、負=右回り。範囲: -360〜+360。
+            angle_deg: 回転角度（度）。正=左回り、負=右回り。範囲: -360〜+360。0.0=ストップ指示があるまで左回りで継続。
             speed: 角速度レベル。low/medium/high。
         """
-        angle_deg = clamp_angle(angle_deg)
-        duration_sec = angle_to_duration(angle_deg, speed)
+        continuous = (angle_deg == 0.0)
+        if not continuous:
+            angle_deg = clamp_angle(angle_deg)
+        duration_sec = 0.0 if continuous else angle_to_duration(angle_deg, speed)
         msg = f"rotate_robot(angle_deg={angle_deg}, speed={speed!r})"
         logger.info(f"[tool] {msg}")
         self._tool_call_log.append(msg)
