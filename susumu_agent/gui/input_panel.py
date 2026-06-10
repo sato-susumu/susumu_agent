@@ -228,6 +228,8 @@ class InputPanelApp:
         btn_frame.pack(fill="x", **pad)
         ttk.Button(btn_frame, text="クリア", style="Big.TButton",
                    command=lambda: self._free_text.delete("1.0", "end")).pack(side="left")
+        ttk.Button(btn_frame, text="ストップ", style="Big.TButton",
+                   command=self._send_stop).pack(side="left", padx=(8, 0))
         ttk.Button(btn_frame, text="送信 →", style="Big.TButton",
                    command=self._send_free_text).pack(side="right")
 

@@ -5,7 +5,7 @@ import asyncio
 from susumu_agent.business.capabilities import SPEED_MAP, angle_to_duration, clamp_angle, clamp_duration
 from susumu_agent.business.shared_state import get_state
 
-from .interface import Direction, RobotInterface, SpeedLevel
+from .interface import Direction, RobotInterface, SpeedLevel, TurnDirection
 
 try:
     import rclpy  # noqa: F401
@@ -79,9 +79,10 @@ class ROS2Robot(RobotInterface):
         self._publish(0.0, 0.0)
         state.zero_twist()
 
-    async def rotate(self, angle_deg: float, speed: SpeedLevel) -> None:
+    async def rotate(self, angle_deg: float, speed: SpeedLevel, continuous: bool = False) -> None:
         angular = SPEED_MAP[speed]["angular"]
-        continuous = (angle_deg == 0.0)
+        if angle_deg < 0:
+            angular = -angular
 
         if continuous:
             state = get_state()
@@ -95,8 +96,6 @@ class ROS2Robot(RobotInterface):
             return
 
         angle_deg = clamp_angle(angle_deg)
-        if angle_deg < 0:
-            angular = -angular
         duration_sec = angle_to_duration(angle_deg, speed)
 
         state = get_state()
@@ -105,6 +104,29 @@ class ROS2Robot(RobotInterface):
         elapsed = 0.0
         while elapsed < duration_sec and not state.stop_event.is_set():
             self._publish(0.0, angular)
+            await asyncio.sleep(interval)
+            elapsed += interval
+        self._publish(0.0, 0.0)
+        state.zero_twist()
+
+    async def curve(self, direction: Direction, turn: TurnDirection, speed: SpeedLevel, duration_sec: float) -> None:
+        linear = SPEED_MAP[speed]["linear"]
+        if direction == "backward":
+            linear = -linear
+        angular = SPEED_MAP[speed]["angular"] * 0.5
+        if turn == "right":
+            angular = -angular
+
+        state = get_state()
+        continuous = (duration_sec == 0.0)
+        if not continuous:
+            duration_sec = clamp_duration(duration_sec)
+
+        state.set_twist(linear, angular)
+        interval = 0.1
+        elapsed = 0.0
+        while (continuous or elapsed < duration_sec) and not state.stop_event.is_set():
+            self._publish(linear, angular)
             await asyncio.sleep(interval)
             elapsed += interval
         self._publish(0.0, 0.0)

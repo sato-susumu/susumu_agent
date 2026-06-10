@@ -86,71 +86,129 @@ class RobotTools:
         self,
         angle_deg: float,
         speed: Literal["low", "medium", "high"] = "medium",
+        continuous: bool = False,
     ) -> dict:
         """ロボットをその場で旋回させる。
 
         Args:
-            angle_deg: 回転角度（度）。正=左回り、負=右回り。範囲: -360〜+360。0.0=ストップ指示があるまで左回りで継続。
+            angle_deg: 回転角度（度）。正=左回り、負=右回り。範囲: -360〜+360。
+                       continuous=True のときは符号のみ使用（大きさ無視）。
             speed: 角速度レベル。low/medium/high。
+            continuous: True にするとストップ指示があるまで旋回し続ける。
+                        角度指定なし継続回転（「くるくる回って」「ずっと右回りして」）に使用。
+                        angle_deg の符号で方向を決定（正=左回り、負=右回り）。
         """
-        continuous = (angle_deg == 0.0)
         if not continuous:
             angle_deg = clamp_angle(angle_deg)
         duration_sec = 0.0 if continuous else angle_to_duration(angle_deg, speed)
-        msg = f"rotate_robot(angle_deg={angle_deg}, speed={speed!r})"
+        msg = f"rotate_robot(angle_deg={angle_deg}, speed={speed!r}, continuous={continuous})"
         logger.info(f"[tool] {msg}")
         self._tool_call_log.append(msg)
         state = get_state()
-        state.last_command = {"tool": "rotate_robot", "angle_deg": angle_deg, "speed": speed}
+        state.last_command = {"tool": "rotate_robot", "angle_deg": angle_deg,
+                               "speed": speed, "continuous": continuous}
         self._session_store.append_command_log({"event": "tool_call", "tool": "rotate_robot",
-                                                "angle_deg": angle_deg, "speed": speed})
+                                                "angle_deg": angle_deg, "speed": speed,
+                                                "continuous": continuous})
         self._emit({"type": "tool_start", "tool": "rotate_robot",
-                    "angle_deg": angle_deg, "speed": speed})
+                    "angle_deg": angle_deg, "speed": speed, "continuous": continuous})
         if state.stop_event.is_set():
             self._emit({"type": "tool_done", "tool": "rotate_robot", "status": "aborted"})
             return {"status": "aborted", "reason": "緊急停止中"}
-        await self._robot.rotate(angle_deg, speed)
+        await self._robot.rotate(angle_deg, speed, continuous)
         self._emit({"type": "tool_done", "tool": "rotate_robot", "status": "ok",
                     "angle_deg": angle_deg, "speed": speed, "duration_sec": round(duration_sec, 2)})
         return {"status": "ok", "angle_deg": angle_deg, "speed": speed,
                 "duration_sec": round(duration_sec, 2)}
 
-    async def execute_sequence(self, steps: list[dict]) -> dict:
+    async def curve_robot(
+        self,
+        direction: Literal["forward", "backward"] = "forward",
+        turn: Literal["left", "right"] = "left",
+        speed: Literal["low", "medium", "high"] = "medium",
+        duration_sec: float = 0.0,
+    ) -> dict:
+        """前進・後退しながら左右にカーブする（linear と angular を同時に指令）。
+
+        Args:
+            direction: 進行方向。forward=前進、backward=後退。
+            turn: カーブ方向。left=左カーブ、right=右カーブ。
+            speed: 速度。low/medium/high。
+            duration_sec: 継続時間（秒）。0.0=ストップ指示があるまで継続、0.1〜30.0=指定秒数。
+        """
+        if duration_sec != 0.0:
+            duration_sec = clamp_duration(duration_sec)
+        msg = f"curve_robot(direction={direction!r}, turn={turn!r}, speed={speed!r}, duration_sec={duration_sec})"
+        logger.info(f"[tool] {msg}")
+        self._tool_call_log.append(msg)
+        state = get_state()
+        state.last_command = {"tool": "curve_robot", "direction": direction,
+                               "turn": turn, "speed": speed, "duration_sec": duration_sec}
+        self._session_store.append_command_log({"event": "tool_call", "tool": "curve_robot",
+                                                "direction": direction, "turn": turn,
+                                                "speed": speed, "duration_sec": duration_sec})
+        self._emit({"type": "tool_start", "tool": "curve_robot",
+                    "direction": direction, "turn": turn, "speed": speed, "duration_sec": duration_sec})
+        if state.stop_event.is_set():
+            self._emit({"type": "tool_done", "tool": "curve_robot", "status": "aborted"})
+            return {"status": "aborted", "reason": "緊急停止中"}
+        await self._robot.curve(direction, turn, speed, duration_sec)
+        self._emit({"type": "tool_done", "tool": "curve_robot", "status": "ok",
+                    "direction": direction, "turn": turn, "speed": speed, "duration_sec": duration_sec})
+        return {"status": "ok", "direction": direction, "turn": turn,
+                "speed": speed, "duration_sec": duration_sec}
+
+    async def execute_sequence(self, steps: list[dict], loop: bool = False) -> dict:
         """複数の移動ステップを順番に実行する。
 
         Args:
-            steps: 実行するステップのリスト。各ステップは move_robot または rotate_robot
+            steps: 実行するステップのリスト。各ステップは move_robot / rotate_robot / curve_robot
                    のパラメータを持つ dict。
                    移動ステップ例: {"type": "move", "direction": "forward", "speed": "medium", "duration_sec": 2.0}
                    旋回ステップ例: {"type": "rotate", "angle_deg": -90, "speed": "medium"}
+                   カーブステップ例: {"type": "curve", "direction": "forward", "turn": "left", "speed": "medium", "duration_sec": 2.0}
+            loop: True にするとステップを繰り返し続け、ストップ指示があるまで継続する。
+                  時間指定なしで「ジグザグに進む」「繰り返し移動する」などに使用。
         """
         state = get_state()
         total = len(steps)
         completed = 0
-        msg = f"execute_sequence(total_steps={total})"
+        msg = f"execute_sequence(total_steps={total}, loop={loop})"
         logger.info(f"[tool] {msg}")
         self._tool_call_log.append(msg)
         self._session_store.append_command_log({"event": "tool_call", "tool": "execute_sequence",
-                                                "total_steps": total})
-        self._emit({"type": "tool_start", "tool": "execute_sequence", "total_steps": total})
-        for step in steps:
-            if state.stop_event.is_set():
-                logger.info(f"[tool] execute_sequence 中断（{completed}/{total} 完了）")
-                self._emit({"type": "tool_done", "tool": "execute_sequence", "status": "interrupted",
-                            "completed_steps": completed, "total": total})
-                return {"status": "interrupted", "completed_steps": completed, "total": total}
-            if step.get("type") == "rotate":
-                await self.rotate_robot(
-                    angle_deg=step.get("angle_deg", 0),
-                    speed=step.get("speed", "medium"),
-                )
-            else:
-                await self.move_robot(
-                    direction=step.get("direction", "forward"),
-                    speed=step.get("speed", "medium"),
-                    duration_sec=step.get("duration_sec", 2.0),
-                )
-            completed += 1
+                                                "total_steps": total, "loop": loop})
+        self._emit({"type": "tool_start", "tool": "execute_sequence", "total_steps": total, "loop": loop})
+
+        while True:
+            for step in steps:
+                if state.stop_event.is_set():
+                    logger.info(f"[tool] execute_sequence 中断（{completed} ステップ完了）")
+                    self._emit({"type": "tool_done", "tool": "execute_sequence", "status": "interrupted",
+                                "completed_steps": completed, "total": total})
+                    return {"status": "interrupted", "completed_steps": completed, "total": total}
+                if step.get("type") == "rotate":
+                    await self.rotate_robot(
+                        angle_deg=step.get("angle_deg", 0),
+                        speed=step.get("speed", "medium"),
+                        continuous=step.get("continuous", False),
+                    )
+                elif step.get("type") == "curve":
+                    await self.curve_robot(
+                        direction=step.get("direction", "forward"),
+                        turn=step.get("turn", "left"),
+                        speed=step.get("speed", "medium"),
+                        duration_sec=step.get("duration_sec", 2.0),
+                    )
+                else:
+                    await self.move_robot(
+                        direction=step.get("direction", "forward"),
+                        speed=step.get("speed", "medium"),
+                        duration_sec=step.get("duration_sec", 2.0),
+                    )
+                completed += 1
+            if not loop:
+                break
         self._emit({"type": "tool_done", "tool": "execute_sequence", "status": "ok",
                     "completed_steps": completed, "total": total})
         return {"status": "ok", "completed_steps": completed, "total": total}
@@ -243,6 +301,7 @@ class RobotTools:
         return [
             self.move_robot,
             self.rotate_robot,
+            self.curve_robot,
             self.execute_sequence,
             self.observe,
             self.query_status,

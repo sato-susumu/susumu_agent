@@ -330,14 +330,32 @@ class RobotController:
         if self._tools is not None:
             self._tools.set_agent_event_callback(_on_agent_event)
 
+        current_task: asyncio.Task | None = None
+
         while not state.shutdown_event.is_set():
             user_input = await self._ros_input_queue.get()
-            response = await self._process_user_input(
-                user_input, session_store, state,
-                on_text=self._publish_to_human,
-            )
-            if response:
-                self._publish_agent_event({"type": "action_completed", "response": response})
+
+            # 通常コマンドが実行中なら中断して完了を待つ
+            if current_task is not None and not current_task.done():
+                state.stop_event.set()
+                if self._robot is not None:
+                    self._robot.stop()
+                await current_task
+                current_task = None
+                state.stop_event.clear()
+
+            async def _run(text: str) -> None:
+                response = await self._process_user_input(
+                    text, session_store, state,
+                    on_text=self._publish_to_human,
+                )
+                if response:
+                    self._publish_agent_event({"type": "action_completed", "response": response})
+
+            current_task = asyncio.create_task(_run(user_input))
+
+        if current_task is not None and not current_task.done():
+            current_task.cancel()
 
     async def run(self) -> None:
         try:

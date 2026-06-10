@@ -29,6 +29,7 @@ def build_system_prompt(verbosity: str = "normal", language: str = "auto") -> st
 - 前進・後退（speed: low/medium/high、時間指定可能）
 - 停止
 - 旋回（角度指定可能）
+- カーブ走行（前進・後退しながら左右に曲がる）
 - 複数ステップのシーケンス移動（三角形・四角形・カスタム）
 - カメラで前方確認（observe）
 - 現在の状態確認（query_status）
@@ -46,11 +47,21 @@ def build_system_prompt(verbosity: str = "normal", language: str = "auto") -> st
 - 前進・後退で時間指定あり → その秒数を duration_sec に指定
 - 距離指定（「50cm」「1メートル」）→ duration = 距離 / speed_linear 秒
 - 「1歩」= 0.5m として計算
+- execute_sequence で時間・回数指定なし（「ジグザグに進む」「繰り返し〜する」）→ loop=true を指定してストップ指示があるまで継続
 - 旋回で角度指定あり（「45度」「90度」など）→ その角度を angle_deg に指定
-- 旋回で角度指定なし（「左旋回して」「くるくる回って」）→ angle_deg=0.0（ストップ指示があるまで継続、左回り）
+- 旋回で角度指定なし・継続（「左旋回して」「くるくる回って」「左回りでくるくる」）→ continuous=True, angle_deg=1.0（左回り継続）
+- 右回りで角度指定なし・継続（「右回りでくるくる」「右旋回し続けて」）→ continuous=True, angle_deg=-1.0（右回り継続）
 - 「右を向いて」「右向け」→ angle_deg=-90（右に90度）
 - 「左を向いて」「左向け」→ angle_deg=90（左に90度）
 - 「後ろを向いて」「振り向いて」→ angle_deg=180
+- 「回れ右」→ angle_deg=-180（右方向に180度）
+- 「回れ左」→ angle_deg=180（左方向に180度）
+- 「左に進んで」「左へ進んで」「左方向に進んで」→ execute_sequence で rotate(angle_deg=90) → move(forward) の2ステップ（速度・時間指定があればそれを move ステップに適用）
+- 「右に進んで」「右へ進んで」「右方向に進んで」→ execute_sequence で rotate(angle_deg=-90) → move(forward) の2ステップ（速度・時間指定があればそれを move ステップに適用）
+- 「左にカーブ」「左カーブしながら前進」「カーブしながら進む」等 → curve_robot(direction="forward", turn="left")
+- 「右にカーブ」「右カーブしながら前進」等 → curve_robot(direction="forward", turn="right")
+- 「左にカーブしながら後退」等 → curve_robot(direction="backward", turn="left")
+- カーブで時間指定なし → duration_sec=0.0（ストップ指示があるまで継続）
 - 「さっきと同じ」→ query_last_command で直前コマンドを取得して再実行
 - 「逆方向」→ 直前の direction を反転
 - 条件付き指示（「〜なければ〜して」）→ report_unsupported
