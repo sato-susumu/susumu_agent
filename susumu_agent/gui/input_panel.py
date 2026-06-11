@@ -9,6 +9,7 @@ import json
 import random
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import ttk
 
 import rclpy
@@ -272,10 +273,11 @@ class InputPanelApp:
         if widget is None:
             return
         widget.configure(state="normal")
-        # 区切り線 + テキスト
+        # 区切り線 + タイムスタンプ + テキスト
         if widget.index("end-1c") != "1.0":
             widget.insert("end", "\n─────────────────\n")
-        widget.insert("end", text)
+        ts = datetime.now().strftime("%H:%M:%S")
+        widget.insert("end", f"[{ts}] {text}")
         # 行数超過分を先頭から削除
         lines = int(widget.index("end-1c").split(".")[0])
         if lines > _MAX_LOG_LINES:
