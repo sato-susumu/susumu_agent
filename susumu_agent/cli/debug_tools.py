@@ -57,12 +57,12 @@ class DebugRunner:
         finally:
             self._teardown()
 
-    async def run_rotate(self, angle: float, speed: str) -> None:
+    async def run_rotate(self, angle: float, speed: str, duration: float) -> None:
         robot = self._setup_robot()
         tools = self._build_tools(robot)
         try:
-            logger.debug(f"rotate_robot({angle}, {speed!r})")
-            logger.info(f"result: {await tools.rotate_robot(angle, speed)}")
+            logger.debug(f"rotate_robot({angle}, {speed!r}, duration_sec={duration})")
+            logger.info(f"result: {await tools.rotate_robot(angle, speed, duration_sec=duration)}")
         finally:
             self._teardown()
 
@@ -129,10 +129,12 @@ def move(ctx: click.Context, direction: str, speed: str, duration: float) -> Non
 @cli.command()
 @click.argument("angle", type=float, default=90.0)
 @click.argument("speed", type=click.Choice(["low", "medium", "high"]), default="medium")
+@click.option("--duration", type=float, default=0.0, show_default=True,
+              help="旋回継続時間（秒）。指定時は angle の符号のみ方向に使用")
 @click.pass_context
-def rotate(ctx: click.Context, angle: float, speed: str) -> None:
+def rotate(ctx: click.Context, angle: float, speed: str, duration: float) -> None:
     """ロボットを旋回させる（正=左回り、負=右回り）。"""
-    asyncio.run(ctx.obj["runner"].run_rotate(angle, speed))
+    asyncio.run(ctx.obj["runner"].run_rotate(angle, speed, duration))
 
 
 @cli.command()

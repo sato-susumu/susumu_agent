@@ -50,36 +50,32 @@ class MockRobot(RobotInterface):
         if not self._dry_run:
             state.zero_twist()
 
-    async def rotate(self, angle_deg: float, speed: SpeedLevel, continuous: bool = False) -> None:
+    async def rotate(self, angle_deg: float, speed: SpeedLevel, continuous: bool = False,
+                     duration_sec: float = 0.0) -> None:
         angular = SPEED_MAP[speed]["angular"]
         if angle_deg < 0:
             angular = -angular
 
-        if continuous:
-            direction_label = "左" if angular >= 0 else "右"
-            logger.info(f"[MockRobot] rotate {direction_label}回り継続 angular_z={angular:.2f} rad/s 開始")
-            state = get_state()
-            if not self._dry_run:
-                state.set_twist(0.0, angular)
-            interval = 0.1
-            while not state.stop_event.is_set():
-                await asyncio.sleep(interval)
-            logger.info("[MockRobot] rotate 完了 → 停止")
-            if not self._dry_run:
-                state.zero_twist()
-            return
+        direction_label = "左" if angular >= 0 else "右"
+        if duration_sec > 0.0:
+            continuous = False
+            duration_sec = clamp_duration(duration_sec)
+            label = f"{direction_label}回り {duration_sec:.1f}s"
+        elif continuous:
+            label = f"{direction_label}回り継続"
+        else:
+            angle_deg = clamp_angle(angle_deg)
+            duration_sec = angle_to_duration(angle_deg, speed)
+            label = f"angle={angle_deg:.1f}° × {duration_sec:.2f}s"
 
-        angle_deg = clamp_angle(angle_deg)
-        duration_sec = angle_to_duration(angle_deg, speed)
-
-        logger.info(f"[MockRobot] rotate angle={angle_deg:.1f}° angular_z={angular:.2f} rad/s × {duration_sec:.2f}s 開始")
+        logger.info(f"[MockRobot] rotate {label} angular_z={angular:.2f} rad/s 開始")
         state = get_state()
         if not self._dry_run:
             state.set_twist(0.0, angular)
 
         interval = 0.1
         elapsed = 0.0
-        while elapsed < duration_sec and not state.stop_event.is_set():
+        while (continuous or elapsed < duration_sec) and not state.stop_event.is_set():
             await asyncio.sleep(interval)
             elapsed += interval
 

@@ -28,7 +28,7 @@ def build_system_prompt(verbosity: str = "normal", language: str = "auto") -> st
 ## できること
 - 前進・後退（speed: low/medium/high、時間指定可能）
 - 停止
-- 旋回（角度指定可能）
+- 旋回（角度指定・時間指定可能）
 - カーブ走行（前進・後退しながら左右に曲がる）
 - 複数ステップのシーケンス移動（三角形・四角形・カスタム）
 - カメラで前方確認（observe）
@@ -67,6 +67,7 @@ def build_system_prompt(verbosity: str = "normal", language: str = "auto") -> st
 - 旋回で角度指定あり（「45度」「90度」など）→ その角度を angle_deg に指定
 - 旋回で角度指定なし・継続（「左旋回して」「くるくる回って」「左回りでくるくる」）→ continuous=True, angle_deg=1.0（左回り継続）
 - 右回りで角度指定なし・継続（「右回りでくるくる」「右旋回し続けて」）→ continuous=True, angle_deg=-1.0（右回り継続）
+- 旋回で時間指定あり（「3秒間右に回って」「5秒間左旋回」）→ duration_sec にその秒数を指定、angle_deg は符号のみで方向指定（右=-1.0、左=1.0）
 - 「右を向いて」「右向け」→ angle_deg=-90（右に90度）
 - 「左を向いて」「左向け」→ angle_deg=90（左に90度）
 - 「後ろを向いて」「振り向いて」→ angle_deg=180

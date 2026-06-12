@@ -79,30 +79,24 @@ class ROS2Robot(RobotInterface):
         self._publish(0.0, 0.0)
         state.zero_twist()
 
-    async def rotate(self, angle_deg: float, speed: SpeedLevel, continuous: bool = False) -> None:
+    async def rotate(self, angle_deg: float, speed: SpeedLevel, continuous: bool = False,
+                     duration_sec: float = 0.0) -> None:
         angular = SPEED_MAP[speed]["angular"]
         if angle_deg < 0:
             angular = -angular
 
-        if continuous:
-            state = get_state()
-            state.set_twist(0.0, angular)
-            interval = 0.1
-            while not state.stop_event.is_set():
-                self._publish(0.0, angular)
-                await asyncio.sleep(interval)
-            self._publish(0.0, 0.0)
-            state.zero_twist()
-            return
-
-        angle_deg = clamp_angle(angle_deg)
-        duration_sec = angle_to_duration(angle_deg, speed)
+        if duration_sec > 0.0:
+            continuous = False
+            duration_sec = clamp_duration(duration_sec)
+        elif not continuous:
+            angle_deg = clamp_angle(angle_deg)
+            duration_sec = angle_to_duration(angle_deg, speed)
 
         state = get_state()
         state.set_twist(0.0, angular)
         interval = 0.1
         elapsed = 0.0
-        while elapsed < duration_sec and not state.stop_event.is_set():
+        while (continuous or elapsed < duration_sec) and not state.stop_event.is_set():
             self._publish(0.0, angular)
             await asyncio.sleep(interval)
             elapsed += interval

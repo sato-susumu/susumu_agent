@@ -87,35 +87,46 @@ class RobotTools:
         angle_deg: float,
         speed: Literal["low", "medium", "high"] = "medium",
         continuous: bool = False,
+        duration_sec: float = 0.0,
     ) -> dict:
         """ロボットをその場で旋回させる。
 
         Args:
             angle_deg: 回転角度（度）。正=左回り、負=右回り。範囲: -360〜+360。
-                       continuous=True のときは符号のみ使用（大きさ無視）。
+                       continuous=True または duration_sec 指定時は符号のみ使用（大きさ無視）。
             speed: 角速度レベル。low/medium/high。
             continuous: True にするとストップ指示があるまで旋回し続ける。
                         角度指定なし継続回転（「くるくる回って」「ずっと右回りして」）に使用。
                         angle_deg の符号で方向を決定（正=左回り、負=右回り）。
+            duration_sec: 旋回継続時間（秒）。0.0=指定なし、0.1〜30.0=指定秒数だけ旋回。
+                          時間指定旋回（「3秒間右に回って」）に使用。angle_deg の符号で方向を決定。
         """
-        if not continuous:
+        timed = duration_sec > 0.0
+        if timed:
+            continuous = False
+            duration_sec = clamp_duration(duration_sec)
+        elif not continuous:
             angle_deg = clamp_angle(angle_deg)
-        duration_sec = 0.0 if continuous else angle_to_duration(angle_deg, speed)
-        msg = f"rotate_robot(angle_deg={angle_deg}, speed={speed!r}, continuous={continuous})"
+            duration_sec = angle_to_duration(angle_deg, speed)
+        msg = (f"rotate_robot(angle_deg={angle_deg}, speed={speed!r}, "
+               f"continuous={continuous}, duration_sec={duration_sec})")
         logger.info(f"[tool] {msg}")
         self._tool_call_log.append(msg)
         state = get_state()
         state.last_command = {"tool": "rotate_robot", "angle_deg": angle_deg,
-                               "speed": speed, "continuous": continuous}
+                               "speed": speed, "continuous": continuous,
+                               "duration_sec": duration_sec}
         self._session_store.append_command_log({"event": "tool_call", "tool": "rotate_robot",
                                                 "angle_deg": angle_deg, "speed": speed,
-                                                "continuous": continuous})
+                                                "continuous": continuous,
+                                                "duration_sec": duration_sec})
         self._emit({"type": "tool_start", "tool": "rotate_robot",
-                    "angle_deg": angle_deg, "speed": speed, "continuous": continuous})
+                    "angle_deg": angle_deg, "speed": speed, "continuous": continuous,
+                    "duration_sec": duration_sec})
         if state.stop_event.is_set():
             self._emit({"type": "tool_done", "tool": "rotate_robot", "status": "aborted"})
             return {"status": "aborted", "reason": "緊急停止中"}
-        await self._robot.rotate(angle_deg, speed, continuous)
+        await self._robot.rotate(angle_deg, speed, continuous, duration_sec if timed else 0.0)
         self._emit({"type": "tool_done", "tool": "rotate_robot", "status": "ok",
                     "angle_deg": angle_deg, "speed": speed, "duration_sec": round(duration_sec, 2)})
         return {"status": "ok", "angle_deg": angle_deg, "speed": speed,
@@ -192,6 +203,7 @@ class RobotTools:
                         angle_deg=step.get("angle_deg", 0),
                         speed=step.get("speed", "medium"),
                         continuous=step.get("continuous", False),
+                        duration_sec=step.get("duration_sec", 0.0),
                     )
                 elif step.get("type") == "curve":
                     await self.curve_robot(

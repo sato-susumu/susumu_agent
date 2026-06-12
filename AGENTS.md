@@ -45,6 +45,7 @@ ros2 launch susumu_agent turtlesim.launch.py cmd_vel_stamped:=false
 # LLM なしでツールを直接テスト
 python3 -m susumu_agent.cli.debug_tools move forward medium 2.0
 python3 -m susumu_agent.cli.debug_tools rotate 90 medium
+python3 -m susumu_agent.cli.debug_tools rotate --duration 3.0 -- -1.0 medium  # 3秒間右旋回
 python3 -m susumu_agent.cli.debug_tools sequence square
 python3 -m susumu_agent.cli.debug_tools --real --cmd-vel-topic /turtle1/cmd_vel move forward medium 2.0
 ```
