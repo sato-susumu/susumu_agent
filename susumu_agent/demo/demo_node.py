@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import datetime
 import json
 import subprocess
@@ -22,16 +23,17 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 from susumu_agent.agent.factory import AgentFactory
-from susumu_agent.sensors.camera import CameraClient
-from susumu_agent.storage.macro_store import MacroStore
-from susumu_agent.robot.ros2_robot import ROS2Robot
-from susumu_agent.logging.ros_logger import setup_loguru
-from susumu_agent.storage.session_store import SessionStore
-from susumu_agent.business.shared_state import get_state
 from susumu_agent.agent.tools import RobotTools
 from susumu_agent.business.capabilities import EMERGENCY_KEYWORDS
+from susumu_agent.business.shared_state import get_state
 from susumu_agent.demo.commands import DEMO_COMMAND_BY_TEXT, DemoCommand
 from susumu_agent.demo.recorder import TurtlesimRecorder
+from susumu_agent.logging.ros_logger import setup_loguru
+from susumu_agent.robot.ros2_robot import ROS2Robot
+from susumu_agent.sensors.camera import CameraClient
+from susumu_agent.storage.macro_store import MacroStore
+from susumu_agent.storage.session_store import SessionStore
+
 _MIN_SUBTITLE_DURATION_SEC = 2.0
 
 try:
@@ -304,7 +306,7 @@ class DemoRunner:
 
     def _publish_agent_event(self, event: dict) -> None:
         if self._agent_event_pub is not None:
-            import json as _json  # noqa: PLC0415
+            import json as _json
             payload = _json.dumps(event, ensure_ascii=False)
             logger.info(f"[/agent_event] {payload}")
             self._agent_event_pub.publish(String(data=payload))
@@ -474,10 +476,8 @@ def main() -> None:
     config.setdefault("robot", {})["cmd_vel_stamped"] = _as_bool(cmd_vel_stamped)
 
     def _spin() -> None:
-        try:
+        with contextlib.suppress(ExternalShutdownException):
             rclpy.spin(node)
-        except ExternalShutdownException:
-            pass
 
     spin_thread = threading.Thread(target=_spin, daemon=True)
     spin_thread.start()

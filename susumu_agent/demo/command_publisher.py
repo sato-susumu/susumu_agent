@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import threading
 import time
@@ -121,10 +122,8 @@ def main() -> None:
         final_hold_sec=final_hold_sec,
     )
     def _spin() -> None:
-        try:
+        with contextlib.suppress(ExternalShutdownException):
             rclpy.spin(node)
-        except ExternalShutdownException:
-            pass
 
     spin_thread = threading.Thread(target=_spin, daemon=True)
     spin_thread.start()

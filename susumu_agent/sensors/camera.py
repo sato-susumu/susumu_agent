@@ -32,9 +32,9 @@ class CameraClient:
 
     def _init_ros2(self, node) -> None:
         try:
-            import cv2  # noqa: PLC0415
-            from cv_bridge import CvBridge  # noqa: PLC0415
-            from sensor_msgs.msg import Image  # noqa: PLC0415
+            import cv2
+            from cv_bridge import CvBridge
+            from sensor_msgs.msg import Image
             bridge = CvBridge()
 
             def _callback(msg: Image) -> None:

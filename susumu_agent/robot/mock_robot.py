@@ -111,7 +111,7 @@ class MockRobot(RobotInterface):
             await asyncio.sleep(interval)
             elapsed += interval
 
-        logger.info(f"[MockRobot] curve 完了 → 停止")
+        logger.info("[MockRobot] curve 完了 → 停止")
         if not self._dry_run:
             state.zero_twist()
 

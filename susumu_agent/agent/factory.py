@@ -62,7 +62,7 @@ class AgentFactory:
                 "config.yaml の llm.model を 'gemini-2.5-flash' 等の Gemini モデルに変更してください。"
             )
 
-    def create_agent(self, tools_list: list, tools_instance=None) -> "LlmAgent":
+    def create_agent(self, tools_list: list, tools_instance=None) -> LlmAgent:
         llm_cfg = self._config.get("llm", {})
         iface_cfg = self._config.get("interface", {})
         model = llm_cfg.get("model", "gemini-2.5-flash")
@@ -75,12 +75,12 @@ class AgentFactory:
             language=iface_cfg.get("language", "auto"),
         )
 
-        kwargs = dict(
-            name="robot_controller",
-            model=model,
-            instruction=system_prompt,
-            tools=tools_list,
-        )
+        kwargs = {
+            "name": "robot_controller",
+            "model": model,
+            "instruction": system_prompt,
+            "tools": tools_list,
+        }
         if tools_instance is not None:
             kwargs["before_model_callback"] = _make_image_inject_callback(tools_instance)
 

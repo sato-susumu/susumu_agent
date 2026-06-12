@@ -5,6 +5,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import threading
@@ -347,10 +348,8 @@ def main() -> None:
     stt_event_topic   = node.get_parameter("stt_event_topic").value   or "/stt_event"
 
     def _spin() -> None:
-        try:
+        with contextlib.suppress(ExternalShutdownException):
             rclpy.spin(node)
-        except ExternalShutdownException:
-            pass
 
     spin_thread = threading.Thread(target=_spin, daemon=True)
     spin_thread.start()

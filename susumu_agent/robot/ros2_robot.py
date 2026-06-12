@@ -22,7 +22,7 @@ class ROS2Robot(RobotInterface):
 
     def __init__(
         self,
-        node: "Node",
+        node: Node,
         cmd_vel_topic: str = "/cmd_vel",
         cmd_vel_stamped: bool = False,
     ):

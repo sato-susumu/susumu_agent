@@ -12,11 +12,12 @@ cmd_vel_stamped は true がデフォルト（TwistStamped）。
 _DEBUG_DIR = '/home/taro/ros2_ws/src/susumu_agent/debug'
 _ENV_FILE = '/home/taro/ros2_ws/src/susumu_agent/.env'
 
-from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, LogInfo
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
+
+from launch import LaunchDescription
 
 
 def generate_launch_description():

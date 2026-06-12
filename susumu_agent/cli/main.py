@@ -5,6 +5,7 @@ simulate / dry_run モードでは ROS2 不要で動作確認できる。
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import datetime
 import importlib.util
 import json
@@ -18,15 +19,16 @@ import yaml
 from loguru import logger
 
 from susumu_agent.agent.factory import AgentFactory
-from susumu_agent.sensors.camera import CameraClient
+from susumu_agent.agent.tools import RobotTools
 from susumu_agent.business.capabilities import EMERGENCY_KEYWORDS
-from susumu_agent.storage.macro_store import MacroStore
+from susumu_agent.business.shared_state import get_state
+from susumu_agent.logging.ros_logger import setup_loguru
 from susumu_agent.robot.mock_robot import MockRobot
 from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE
-from susumu_agent.logging.ros_logger import setup_loguru
+from susumu_agent.sensors.camera import CameraClient
+from susumu_agent.storage.macro_store import MacroStore
 from susumu_agent.storage.session_store import SessionStore
-from susumu_agent.business.shared_state import get_state
-from susumu_agent.agent.tools import RobotTools
+
 try:
     from dotenv import load_dotenv
     _DOTENV_AVAILABLE = True
@@ -91,7 +93,7 @@ class RobotController:
 
         if mode == "real" or self._uses_ros_topics():
             if ROS2_AVAILABLE:
-                import rclpy  # noqa: PLC0415
+                import rclpy
 
                 if not rclpy.ok():
                     rclpy.init()
@@ -101,7 +103,7 @@ class RobotController:
 
         if mode == "real":
             if ROS2_AVAILABLE:
-                from susumu_agent.robot.ros2_robot import ROS2Robot  # noqa: PLC0415
+                from susumu_agent.robot.ros2_robot import ROS2Robot
 
                 self._robot = ROS2Robot(
                     self._ros_node,
@@ -174,8 +176,7 @@ class RobotController:
         if self._ros_node is None:
             raise RuntimeError("ROS2 node が初期化されていません。")
 
-        import rclpy  # noqa: PLC0415
-        from std_msgs.msg import String  # noqa: PLC0415
+        from std_msgs.msg import String
 
         interface_cfg = self._config.get("interface", {})
         from_topic = interface_cfg.get("from_human_topic", "/from_human")
@@ -204,18 +205,16 @@ class RobotController:
         logger.info(f"エージェントイベント: {agent_event_topic} (std_msgs/String)")
 
     def _spin_ros_node(self) -> None:
-        import rclpy  # noqa: PLC0415
-        from rclpy.executors import ExternalShutdownException  # noqa: PLC0415
+        import rclpy
+        from rclpy.executors import ExternalShutdownException
 
-        try:
+        with contextlib.suppress(ExternalShutdownException):
             rclpy.spin(self._ros_node)
-        except ExternalShutdownException:
-            pass
 
     def _publish_to_human(self, text: str) -> None:
         if self._to_human_pub is None:
             return
-        from std_msgs.msg import String  # noqa: PLC0415
+        from std_msgs.msg import String
 
         logger.info(f"[/to_human] {text}")
         self._to_human_pub.publish(String(data=text))
@@ -223,7 +222,7 @@ class RobotController:
     def _publish_agent_event(self, event: dict) -> None:
         if self._agent_event_pub is None:
             return
-        from std_msgs.msg import String  # noqa: PLC0415
+        from std_msgs.msg import String
 
         payload = json.dumps(event, ensure_ascii=False)
         logger.info(f"[/agent_event] {payload}")
@@ -259,7 +258,7 @@ class RobotController:
         if self._robot is not None:
             self._robot.stop()
         if self._ros_node is not None:
-            import rclpy  # noqa: PLC0415
+            import rclpy
             if rclpy.ok():
                 rclpy.shutdown()
         if self._ros_spin_thread is not None:
@@ -402,7 +401,7 @@ def _read_ros2_params() -> dict:
     """ROS2 launch パラメータを読み取って dict で返す。ROS2 なし環境では空 dict。"""
     if importlib.util.find_spec("rclpy") is None:
         return {}
-    import rclpy  # noqa: PLC0415
+    import rclpy
     rclpy.init()
     node = rclpy.create_node("susumu_agent_node")
     node.declare_parameter("config_path", "")
@@ -471,10 +470,8 @@ def main_entry() -> None:
         from_human_topic=p.get("from_human_topic"),
         to_human_topic=p.get("to_human_topic"),
     )
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(RobotController(config).run())
-    except KeyboardInterrupt:
-        pass
 
 
 @click.command()
@@ -494,10 +491,8 @@ def cli(
     _load_dotenv(env_file)
     _setup_logging(debug, debug_dir)
     config = _build_config(config_path, robot_mode)
-    try:
+    with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(RobotController(config).run())
-    except KeyboardInterrupt:
-        pass
 
 
 if __name__ == "__main__":

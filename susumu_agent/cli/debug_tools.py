@@ -7,12 +7,12 @@ import sys
 import click
 from loguru import logger
 
-from susumu_agent.sensors.camera import CameraClient
-from susumu_agent.storage.macro_store import MacroStore
+from susumu_agent.agent.tools import RobotTools
 from susumu_agent.robot.mock_robot import MockRobot
 from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE, ROS2Robot
+from susumu_agent.sensors.camera import CameraClient
+from susumu_agent.storage.macro_store import MacroStore
 from susumu_agent.storage.session_store import SessionStore
-from susumu_agent.agent.tools import RobotTools
 
 
 class DebugRunner:
@@ -26,7 +26,7 @@ class DebugRunner:
             if not ROS2_AVAILABLE:
                 logger.error("rclpy が利用できません。--real を外してください。")
                 sys.exit(1)
-            import rclpy  # noqa: PLC0415
+            import rclpy
             if not rclpy.ok():
                 rclpy.init()
             self._ros_node = rclpy.create_node("susumu_agent_debug")
@@ -36,7 +36,7 @@ class DebugRunner:
     def _teardown(self) -> None:
         if self._ros_node is not None:
             self._ros_node.destroy_node()
-            import rclpy  # noqa: PLC0415
+            import rclpy
             if rclpy.ok():
                 rclpy.shutdown()
 

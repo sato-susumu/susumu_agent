@@ -1,5 +1,6 @@
-from setuptools import setup, find_packages
 from glob import glob
+
+from setuptools import find_packages, setup
 
 package_name = "susumu_agent"
 

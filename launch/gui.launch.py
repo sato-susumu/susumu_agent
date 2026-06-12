@@ -4,10 +4,11 @@
     ros2 launch susumu_agent gui.launch.py
     ros2 launch susumu_agent gui.launch.py from_human_topic:=/from_human
 """
-from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+
+from launch import LaunchDescription
 
 
 def generate_launch_description():
@@ -32,4 +33,4 @@ def generate_launch_description():
         }],
     )
 
-    return LaunchDescription(args + [gui_node])
+    return LaunchDescription([*args, gui_node])

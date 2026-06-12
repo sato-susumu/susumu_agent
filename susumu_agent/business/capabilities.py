@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Literal, TypedDict
+from typing import ClassVar, Literal, TypedDict
 
 SpeedLevel = Literal["low", "medium", "high"]
 Direction = Literal["forward", "backward", "stop"]
@@ -17,7 +17,7 @@ SpeedKeywordMap = dict[SpeedLevel, list[str]]
 
 
 class RobotCapabilities:
-    SPEED_MAP: SpeedMap = {
+    SPEED_MAP: ClassVar[SpeedMap] = {
         "low":    SpeedEntry(linear=0.1, angular=0.3),
         "medium": SpeedEntry(linear=0.3, angular=0.8),
         "high":   SpeedEntry(linear=0.5, angular=1.5),
@@ -34,7 +34,7 @@ class RobotCapabilities:
         "やめて", "やめろ", "緊急停止", "stop", "STOP",
     })
 
-    SPEED_KEYWORDS: SpeedKeywordMap = {
+    SPEED_KEYWORDS: ClassVar[SpeedKeywordMap] = {
         "low":  ["ゆっくり", "ゆったり", "ちょっとずつ", "ちょい", "そろそろ",
                  "のんびり", "少し", "slowly", "gently", "carefully"],
         "high": ["素早く", "速く", "ダッシュ", "全力", "急いで", "全速力",

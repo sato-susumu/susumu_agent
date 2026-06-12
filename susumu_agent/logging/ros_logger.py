@@ -1,4 +1,6 @@
 """loguru を ROS2 ロガーにブリッジするユーティリティ。"""
+from typing import ClassVar
+
 from loguru import logger
 
 try:
@@ -10,7 +12,7 @@ except ImportError:
 
 
 class RosLogger:
-    _LEVEL_MAP: dict[str, str] = {
+    _LEVEL_MAP: ClassVar[dict[str, str]] = {
         "DEBUG":    "debug",
         "INFO":     "info",
         "SUCCESS":  "info",
