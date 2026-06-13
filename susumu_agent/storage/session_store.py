@@ -10,7 +10,7 @@ class SessionStore:
     _MAX_TURNS = 5
     _SESSION_TTL_SEC = 86400
 
-    def __init__(self, session_file: Path = Path("session_history.jsonl")) -> None:
+    def __init__(self, session_file: Path = Path.home() / ".susumu_agent" / "session_history.jsonl") -> None:
         self._session_file = session_file
         self._command_log_path: Path | None = None
 
@@ -41,5 +41,6 @@ class SessionStore:
 
     def save_turn(self, role: str, content: str) -> None:
         entry = {"ts": time.time(), "role": role, "content": content}
+        self._session_file.parent.mkdir(parents=True, exist_ok=True)
         with self._session_file.open("a", encoding="utf-8") as f:
             f.write(json.dumps(entry, ensure_ascii=False) + "\n")

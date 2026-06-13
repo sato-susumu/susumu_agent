@@ -102,6 +102,14 @@ ros2 topic echo /to_human
 
 ---
 
+## 出力ファイル
+
+| ファイル | 説明 |
+|---|---|
+| `~/.susumu_agent/session_history.jsonl` | 会話履歴（ロールと発話内容をJSONL形式で記録） |
+
+---
+
 ## launch ファイル一覧
 
 | ファイル | 説明 | cmd_vel 型 | ROS2 必要 | デバッグモード | 自動終了 |
