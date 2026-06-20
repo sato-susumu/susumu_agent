@@ -21,6 +21,7 @@ from loguru import logger
 from susumu_agent.agent.factory import AgentFactory
 from susumu_agent.agent.tools import RobotTools
 from susumu_agent.business.capabilities import EMERGENCY_KEYWORDS
+from susumu_agent.business.movement_expressions import MovementInterpreter, ToolPlan
 from susumu_agent.business.shared_state import get_state
 from susumu_agent.logging.ros_logger import setup_loguru
 from susumu_agent.robot.mock_robot import MockRobot
@@ -70,6 +71,7 @@ class RobotController:
         self._to_human_pub = None
         self._agent_event_pub = None
         self._from_human_sub = None
+        self._movement_interpreter = MovementInterpreter()
 
     @classmethod
     def _load_config(cls, path: str = "config.yaml") -> dict:
@@ -242,6 +244,40 @@ class RobotController:
             timeout=self._config["llm"].get("timeout_sec", 5),
         )
 
+    async def _handle_direct_movement(
+        self,
+        plan: ToolPlan,
+        on_text: Callable[[str], None] | None = None,
+    ) -> str:
+        if self._tools is None:
+            raise RuntimeError("ロボットツールが初期化されていません。")
+        logger.info(f"定型移動として解釈: {plan.tool} {plan.args}")
+
+        if plan.tool != "report_unsupported" and on_text is not None:
+            on_text(plan.announcement)
+
+        if plan.tool == "move_robot":
+            result = await self._tools.move_robot(**plan.args)
+        elif plan.tool == "rotate_robot":
+            result = await self._tools.rotate_robot(**plan.args)
+        elif plan.tool == "curve_robot":
+            result = await self._tools.curve_robot(**plan.args)
+        elif plan.tool == "execute_sequence":
+            result = await self._tools.execute_sequence(**plan.args)
+        elif plan.tool == "report_unsupported":
+            result = self._tools.report_unsupported(**plan.args)
+        else:
+            raise RuntimeError(f"未対応の direct tool plan: {plan.tool}")
+
+        if result.get("status") == "unsupported":
+            response = result.get("reason", plan.completion)
+            if on_text is not None:
+                on_text(response)
+            return response
+        if result.get("status") == "aborted":
+            return result.get("reason", "中断しました。")
+        return plan.completion
+
     def _print_startup(self) -> None:
         robot_cfg = self._config.get("robot", {})
         mode = robot_cfg.get("mode", "simulate")
@@ -286,11 +322,15 @@ class RobotController:
             session_store.save_turn("assistant", "停止しました。")
             return "停止しました。"
 
-        logger.info("考え中...")
         session_store.save_turn("user", user_input)
 
         try:
-            response = await self._handle_input(user_input, on_text=on_text)
+            direct_plan = self._movement_interpreter.interpret_with_context(user_input, state.last_command)
+            if direct_plan is not None:
+                response = await self._handle_direct_movement(direct_plan, on_text=on_text)
+            else:
+                logger.info("考え中...")
+                response = await self._handle_input(user_input, on_text=on_text)
         except asyncio.TimeoutError:
             response = "タイムアウトしました。もう一度お試しください。"
             logger.error(response)

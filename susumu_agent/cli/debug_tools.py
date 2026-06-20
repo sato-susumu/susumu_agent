@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 
 import click
 from loguru import logger
 
 from susumu_agent.agent.tools import RobotTools
+from susumu_agent.business.movement_expressions import MovementInterpreter
 from susumu_agent.robot.mock_robot import MockRobot
 from susumu_agent.robot.ros2_robot import ROS2_AVAILABLE, ROS2Robot
 from susumu_agent.sensors.camera import CameraClient
@@ -105,6 +107,21 @@ class DebugRunner:
         finally:
             self._teardown()
 
+    def run_parse(self, text: str, last_command_json: str | None) -> None:
+        last_command = json.loads(last_command_json) if last_command_json else None
+        plan = MovementInterpreter().interpret_with_context(text, last_command)
+        if plan is None:
+            payload = {"status": "fallback", "reason": "ADK/LLM にフォールバック"}
+        else:
+            payload = {
+                "status": "direct",
+                "tool": plan.tool,
+                "args": plan.args,
+                "announcement": plan.announcement,
+                "completion": plan.completion,
+            }
+        click.echo(json.dumps(payload, ensure_ascii=False, indent=2))
+
 
 @click.group()
 @click.option("--real", is_flag=True, default=False, help="ROS2 実機に接続する")
@@ -158,6 +175,15 @@ def status(ctx: click.Context) -> None:
 def sequence(ctx: click.Context, shape: str, speed: str) -> None:
     """シーケンス移動を実行する（triangle / square）。"""
     asyncio.run(ctx.obj["runner"].run_sequence(shape, speed))
+
+
+@cli.command()
+@click.argument("text")
+@click.option("--last-command", default=None, help="直前コマンド JSON。もう一回/逆方向などの確認に使う")
+@click.pass_context
+def parse(ctx: click.Context, text: str, last_command: str | None) -> None:
+    """自然言語入力を direct movement plan に変換する。ロボットは動かさない。"""
+    ctx.obj["runner"].run_parse(text, last_command)
 
 
 def main() -> None:

@@ -43,7 +43,8 @@
 
 自然言語（日本語・英語）でロボットを制御するシステム。
 ユーザーが「ゆっくり前進して」「右に90度回転して」などと入力すると、
-LLM がコマンドを解釈してロボットへの動作指令に変換する。
+明確な移動表現は business 層の `MovementInterpreter` が LLM なしで `ToolPlan` に変換する。
+曖昧な指示、カメラ確認、マクロ操作など direct path で扱わない入力は Google ADK の LlmAgent にフォールバックし、Function Calling でロボットへの動作指令に変換する。
 
 **技術スタック：**
 
@@ -77,12 +78,14 @@ flowchart TD
     Simulate["simulate\nROS2 不要 / MockRobot"]
     Real["real\nROS2 必要 / /cmd_vel"]
     DryRun["dry_run\nLLM のみ / ロボット指令なし"]
-    UseADK["ADK + LLM\n自然言語処理"]
+    UseDirect["MovementInterpreter\n明確な移動表現"]
+    UseADK["ADK + LLM\n曖昧指示・observe・macro"]
 
     Start --> Config
     Config -->|simulate| Simulate
     Config -->|real| Real
     Config -->|dry_run| DryRun
+    Simulate & Real & DryRun --> UseDirect
     Simulate & Real & DryRun --> UseADK
 ```
 
@@ -98,6 +101,7 @@ flowchart TD
 | 後退 | speed / duration_sec | 「少し後退して」 |
 | 停止 | — | 「止まれ」 |
 | 旋回 | angle_deg / speed | 「右に90度回転」 |
+| カーブ走行 | direction / turn / speed / duration_sec | 「右カーブしながら前進」 |
 | シーケンス | 複数ステップ | 「三角形を描いて」 |
 | カメラ確認 | question | 「前方に何がある？」 |
 | 状態確認 | — | 「今動いてる？」 |
@@ -133,18 +137,19 @@ duration_sec = abs(radians(angle_deg)) / angular_vel
 
 ### 2.3 ツール一覧
 
-LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTools` クラスに実装。
+ADK が Function Calling で呼び出すツール、および direct path が直接呼び出すツール。`tools.py` の `RobotTools` クラスに実装。
 
 | # | ツール | シグネチャ | 役割 |
 |---|---|---|---|
 | 1 | `move_robot` | `(direction, speed, duration_sec)` | 直進・後退・停止 |
-| 2 | `rotate_robot` | `(angle_deg, speed)` | 旋回（duration はコード側で計算） |
-| 3 | `execute_sequence` | `(steps: list[MoveStep\|RotateStep])` | 複数ステップ連続実行・進捗追跡 |
-| 4 | `observe` | `(question, sensor)` | カメラ画像取得（解析は LLM が行う） |
-| 5 | `query_status` | `()` | 現在の移動状態 |
-| 6 | `query_last_command` | `()` | 直前コマンド参照 |
-| 7 | `manage_macro` | `(action, name, steps)` | マクロ登録・実行・削除・一覧 |
-| 8 | `report_unsupported` | `(reason)` | 能力範囲外を通知 |
+| 2 | `rotate_robot` | `(angle_deg, speed, continuous, duration_sec)` | 旋回（角度指定・継続・時間指定） |
+| 3 | `curve_robot` | `(direction, turn, speed, duration_sec)` | 前進・後退しながら左右にカーブ |
+| 4 | `execute_sequence` | `(steps: list[dict], loop)` | 複数ステップ連続実行・進捗追跡 |
+| 5 | `observe` | `(question, sensor)` | カメラ画像取得（解析は LLM が行う） |
+| 6 | `query_status` | `()` | 現在の移動状態 |
+| 7 | `query_last_command` | `()` | 直前コマンド参照 |
+| 8 | `manage_macro` | `(action, name, steps)` | マクロ登録・実行・削除・一覧 |
+| 9 | `report_unsupported` | `(reason)` | 能力範囲外を通知 |
 
 ツールのパラメータ境界値：
 
@@ -153,7 +158,8 @@ LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTool
 | `speed` | `low` / `medium` / `high` のみ | ADK スキーマ違反で拒否 |
 | `direction` | `forward` / `backward` / `stop` のみ | ADK スキーマ違反で拒否 |
 | `duration_sec` | `0.0`=継続 / `0.1〜30.0` 秒 | clamp（上限30秒）。`0.0` のみ特殊値 |
-| `angle_deg` | `-360〜+360` 度 / `0.0`=継続 | clamp。`0.0` のみ特殊値（継続旋回） |
+| `angle_deg` | `-360〜+360` 度 | clamp。正=左回り、負=右回り |
+| `continuous` | `true` / `false` | `true` の場合はストップ指示まで旋回継続 |
 
 ---
 
@@ -167,13 +173,19 @@ LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTool
 | `medium` | 普通 / 通常 / 指定なし |
 | `high` | 素早く / 速く / ダッシュ / 全力 / 急いで / fast / quickly |
 
+明確な移動表現は `business/movement_expressions.py` の `MovementInterpreter` で LLM なしに解釈する。
+未対応・曖昧な入力は ADK/LLM にフォールバックする。
+
 **時間・距離変換：**
 
 | 入力 | 変換 |
 |---|---|
 | 「3秒前進」 | `duration_sec = 3.0` |
+| 「三秒前進」 | `duration_sec = 3.0` |
 | 「50cm前進」 | `duration = 0.5 / speed_linear` 秒 |
+| 「五十センチ前進」 | `duration = 0.5 / speed_linear` 秒 |
 | 「1メートル動いて」 | `duration = 1.0 / speed_linear` 秒 |
+| 「一メートル動いて」「半メートル動いて」 | 漢数字・半を距離として解釈 |
 | 「3歩分進んで」 | 1歩 = 0.5m として計算 |
 | 時間・距離の指定なし | `duration_sec = 0.0`（ストップ指示があるまで継続） |
 
@@ -184,8 +196,8 @@ LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTool
 | 「右を向いて」「右向け」 | `-90` | 右に90度で止まる |
 | 「左を向いて」「左向け」 | `90` | 左に90度で止まる |
 | 「後ろを向いて」「振り向いて」 | `180` | 180度で止まる |
-| 「45度回転」「90度旋回」など角度明示 | その角度 | 指定角度で止まる |
-| 「左旋回して」「くるくる回って」など角度なし | `0.0` | ストップ指示があるまで左回りで継続 |
+| 「45度回転」「90度旋回」「九十度旋回」など角度明示 | その角度 | 指定角度で止まる |
+| 「左旋回して」「くるくる回って」など角度なし | `continuous=true`, `angle_deg=1.0` | ストップ指示があるまで左回りで継続 |
 
 正値 = 左回り、負値 = 右回り。
 
@@ -193,16 +205,19 @@ LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTool
 
 | 入力 | 解釈 |
 |---|---|
-| 「さっきと同じ動きを」 | `query_last_command()` で再実行 |
-| 「逆方向に戻って」 | 直前 direction を反転 |
-| 「同じ速さでもっと長く」 | 直前 speed 保持・duration_sec を2倍 |
+| 「さっきと同じ動きを」「もう一回」 | `SharedState.last_command` を再実行 |
+| 「逆方向に戻って」「反対方向」 | 直前 direction / turn / angle_deg を反転 |
+| 「さっきより速く」「もっと速く」 | 直前 speed を1段階上げる |
+| 「さっきより遅く」「もっとゆっくり」 | 直前 speed を1段階下げる |
+
+同じ入力に明示的な移動指示が含まれる場合は、文脈再実行より明示指示を優先する。
+例: 「さっきより速く前進して」は直前コマンドではなく、`前進` を `high` で実行する。
 
 **曖昧指示：**
 
 | 入力パターン | 解釈 |
 |---|---|
 | 「もうちょっと」「少し」 | speed=`low`, duration_sec=1.0 |
-| 「さっきより速く」 | 直前 speed を1段階上げる |
 | 解釈不能な相対指示 | 「どのくらいですか？」と確認 |
 
 条件付き指示（「〜なければ〜して」）は `report_unsupported` を呼ぶ。
@@ -212,7 +227,7 @@ LLM が Function Calling で呼び出す 8 ツール。`tools.py` の `RobotTool
 
 ### 2.5 安全仕様
 
-**3重安全レイヤー：**
+**安全レイヤー：**
 
 ```mermaid
 flowchart LR
@@ -222,24 +237,18 @@ flowchart LR
         EK["ストップ / 止まれ / stop 等\n→ LLM を経由せず即時停止"]
     end
 
-    subgraph "層2: Watchdog"
-        WD["最後のコマンドから5秒経過\n→ 自動で zero_twist()"]
-    end
-
-    subgraph "層3: ロボット側安全機構"
+    subgraph "層2: ロボット側安全機構"
         HW["ハードウェア・ファームウェア\nレベルの安全機能"]
     end
 
     Input --> EK
-    EK -->|"stop_event.set()"| WD
-    WD --> HW
+    EK -->|"stop_event.set() / robot.stop()"| HW
 ```
 
 | レイヤー | 仕組み | 発動条件 |
 |---|---|---|
 | ① 緊急停止 | `stop_event`（threading.Event） | 「ストップ」「止まれ」等のキーワード |
-| ② Watchdog | 最終コマンド時刻監視 | 5秒間コマンドなし |
-| ③ 外部安全機構 | ハードウェア・ファームウェア | 障害物・転倒等 |
+| ② 外部安全機構 | ハードウェア・ファームウェア | 障害物・転倒等 |
 
 **倫理ガードレール（システムプロンプト最優先）：**
 
@@ -265,7 +274,7 @@ flowchart LR
 
 `robot.cmd_vel_stamped` は bool で、`true` の場合は `TwistStamped`、`false` の場合は `Twist` を publish する。launch ファイルの `cmd_vel_stamped` パラメータで上書きできる。
 
-ROS2 launch 経由では `input("あなた: ").strip()` を使わない。`cli/main.py` は launch から起動されたときに `interface.input_mode=ros2` として動作し、`/from_human` の `data` を ADK Runner へ渡す。
+ROS2 launch 経由では `input("あなた: ").strip()` を使わない。`cli/main.py` は launch から起動されたときに `interface.input_mode=ros2` として動作し、`/from_human` の `data` をまず `MovementInterpreter` に渡す。direct path で解釈できない場合のみ ADK Runner へ渡す。
 
 **`/to_human` 送信仕様：**
 
@@ -273,7 +282,8 @@ ROS2 launch 経由では `input("あなた: ").strip()` を使わない。`cli/m
 
 | コマンド種別 | 送信タイミング | 回数 | 内容 |
 |---|---|---|---|
-| 通常コマンド（移動・旋回・マクロ等） | ツール呼び出し直前（LLM の宣言テキスト） | 1回 | 「前進します」「右に旋回します」など |
+| direct path の移動・旋回・シーケンス | ツール呼び出し直前 | 1回 | `ToolPlan.announcement`（「前進します」など） |
+| ADK 経由の移動・旋回・マクロ等 | ツール呼び出し直前（LLM の宣言テキスト） | 1回 | 「前進します」「右に旋回します」など |
 | `observe`（カメラ確認） | ① ツール呼び出し直前 | 2回 | ① 「カメラで確認します」など |
 | | ② LLM の最終応答（画像解析結果） | | ② 「前方に段差が見えます」など |
 | 緊急停止 | 即時 | 1回 | 「停止しました。」 |
@@ -284,7 +294,7 @@ ROS2 launch 経由では `input("あなた: ").strip()` を使わない。`cli/m
 
 | タイミング | 内容 |
 |---|---|
-| ツール呼び出し直前（LLM 宣言） | 「前進します」「右に旋回します」など |
+| ツール呼び出し直前（direct path announcement または LLM 宣言） | 「前進します」「右に旋回します」など |
 | observe 解析完了時 | 「前方に〜が見えます」など画像解析結果 |
 | 緊急停止時 | 「停止しました。」 |
 | エラー時 | エラー内容（LLM 応答内） |
@@ -311,23 +321,25 @@ graph TD
     FromHuman["ROS2 /from_human\nstd_msgs/String"]
     ToHuman["ROS2 /to_human\nstd_msgs/String"]
     Emergency["🛑 緊急停止\n即時実行 / LLM経由なし"]
+    Interpreter["🧭 MovementInterpreter\ndirect path"]
     ADK["🤖 Google ADK\nLlmAgent"]
-    Tools["🔧 RobotTools\n8ツール"]
+    Tools["🔧 RobotTools\n9ツール"]
     Robot["🦾 RobotInterface"]
     Mock["💻 MockRobot\nsimulate モード"]
     ROS2["🤖 ROS2Robot\n/cmd_vel\nTwist / TwistStamped"]
     State["📊 SharedState\nスレッドセーフ"]
-    Watchdog["⏱️ Watchdog\n5秒タイムアウト"]
     Camera["📷 CameraClient\n画像取得"]
     Macro["💾 MacroStore\nmacros.json"]
     Session["📝 SessionStore\nJSONL ログ"]
 
     User -->|"緊急キーワード"| Emergency
-    User -->|"CLI直起動: input()"| ADK
+    User -->|"CLI直起動: input()"| Interpreter
     User -->|"ROS2 launch"| FromHuman
     FromHuman -->|"緊急キーワード"| Emergency
-    FromHuman -->|"通常コマンド"| ADK
+    FromHuman -->|"通常コマンド"| Interpreter
     Emergency --> State
+    Interpreter -->|"明確な移動"| Tools
+    Interpreter -->|"fallback"| ADK
     ADK -->|"Function Calling"| Tools
     ADK -->|"final response"| ToHuman
     Tools --> Robot
@@ -337,8 +349,6 @@ graph TD
     Tools --> Camera
     Robot --> Mock
     Robot --> ROS2
-    State --> Watchdog
-    Watchdog -->|"無通信5秒で停止"| State
 ```
 
 ---
@@ -347,13 +357,13 @@ graph TD
 
 | コンポーネント | ファイル | 責務 |
 |---|---|---|
-| エントリポイント | `cli/main.py` | 入力ループ・緊急停止検出・ADK Runner 起動 |
+| エントリポイント | `cli/main.py` | 入力ループ・緊急停止検出・direct path・ADK Runner 起動 |
 | ADK エージェント | `agent/factory.py` | LlmAgent 定義・モデル設定 |
-| ツール実装 | `agent/tools.py` | 8ツール（RobotTools クラス） |
+| ツール実装 | `agent/tools.py` | 9ツール（RobotTools クラス） |
 | システムプロンプト | `agent/prompt.py` | LLM 向けプロンプト生成 |
 | 能力・定数定義 | `business/capabilities.py` | 速度定数・キーワード（RobotCapabilities クラス） |
+| 移動表現解釈 | `business/movement_expressions.py` | 表現カタログ・MovementInterpreter・golden ケース |
 | 共有状態 | `business/shared_state.py` | SharedState シングルトン・スレッド安全な状態管理 |
-| Watchdog | `business/watchdog.py` | 無通信タイムアウト監視・自動停止 |
 | カメラ | `sensors/camera.py` | Image Subscriber・base64変換・鮮度チェック |
 | セッション管理 | `storage/session_store.py` | セッション履歴・コマンドログ JSONL |
 | マクロ管理 | `storage/macro_store.py` | マクロ登録・読み込み（macros.json） |
@@ -361,7 +371,7 @@ graph TD
 | ロボット抽象 | `robot/interface.py` | RobotInterface 抽象クラス |
 | 実機実装 | `robot/ros2_robot.py` | ROS2 / Twist・TwistStamped パブリッシュ |
 | モック実装 | `robot/mock_robot.py` | simulate / dry_run モード用 |
-| デバッグ CLI | `cli/debug_tools.py` | LLM なしでツールを直接テスト |
+| デバッグ CLI | `cli/debug_tools.py` | LLM なしで direct path の解釈確認・ツール直接テスト |
 | デモノード | `demo/demo_node.py` | `/from_human` を受けて turtlesim デモを実行・録画・字幕生成 |
 | デモ入力ノード | `demo/command_publisher.py` | turtlesim デモ用の自然言語入力を `/from_human` に publish |
 | 録画ユーティリティ | `demo/recorder.py` | ffmpeg x11grab による画面録画 |
@@ -370,13 +380,41 @@ graph TD
 
 ### 3.3 データフロー
 
-**通常コマンド：**
+**通常コマンド（direct path）：**
 
 ```mermaid
 sequenceDiagram
     actor User as ユーザー
     participant FromHuman as /from_human
     participant Main as main.py
+    participant Interpreter as MovementInterpreter
+    participant Tool as RobotTools
+    participant Robot as RobotInterface
+    participant State as SharedState
+    participant ToHuman as /to_human
+
+    User->>Main: "一メートル進んで"
+    Main->>Main: 緊急キーワード判定 → 該当なし
+    Main->>Interpreter: interpret_with_context(text, last_command)
+    Interpreter-->>Main: ToolPlan(move_robot, args)
+    Main->>Tool: move_robot("forward", "medium", 3.333)
+    Tool->>State: last_command 更新・stop_event 確認
+    Tool->>Robot: move("forward", "medium", 3.333)
+    Robot-->>Tool: 完了
+    Tool-->>Main: {status: ok}
+    opt ROS2 launch
+    Main->>ToHuman: "前進します。" / action_completed イベント
+    end
+```
+
+**通常コマンド（ADK fallback）：**
+
+```mermaid
+sequenceDiagram
+    actor User as ユーザー
+    participant FromHuman as /from_human
+    participant Main as main.py
+    participant Interpreter as MovementInterpreter
     participant ADK as Google ADK / LlmAgent
     participant Tool as RobotTools
     participant Robot as RobotInterface
@@ -384,24 +422,24 @@ sequenceDiagram
     participant ToHuman as /to_human
 
     alt CLI 直起動
-        User->>Main: "ゆっくり前進"
+        User->>Main: "何が見える？"
     else ROS2 launch
-        User->>FromHuman: std_msgs/String<br/>"ゆっくり前進"
+        User->>FromHuman: std_msgs/String<br/>"何が見える？"
         FromHuman->>Main: subscribe callback
     end
     Main->>Main: 緊急キーワード判定 → 該当なし
+    Main->>Interpreter: interpret_with_context(text, last_command)
+    Interpreter-->>Main: fallback
     Main->>ADK: run_async()
-    ADK->>ADK: "ゆっくり" → speed=low / "前進" → direction=forward
-    ADK->>Tool: move_robot("forward", "low", 2.0)
+    ADK->>ADK: observe が必要な指示として解釈
+    ADK->>Tool: observe(question="何が見える？")
     Tool->>State: stop_event 確認
-    Tool->>Robot: move("forward", "low", 2.0)
-    Robot-->>Tool: 完了
-    Tool-->>ADK: {status: ok, linear_x: 0.1, duration_sec: 2.0}
-    ADK-->>Main: "低速で2.0秒前進しました。"
+    Tool-->>ADK: {status: ok}
+    ADK-->>Main: final response
     opt ROS2 launch
         Main->>ToHuman: std_msgs/String<br/>応答文字列
     end
-    Main-->>User: 低速で2.0秒前進しました。
+    Main-->>User: カメラ確認結果
 ```
 
 **緊急停止：**
@@ -416,7 +454,7 @@ sequenceDiagram
     User->>Main: "ストップ"
     Main->>State: stop_event.set()
     Main->>Robot: stop()
-    Note over State: Watchdog が zero_twist() を送信
+    Note over State: stop_event により進行中の move / rotate / sequence が中断
 ```
 
 **observe フロー：**
@@ -460,13 +498,12 @@ sequenceDiagram
 |---|---|
 | メインスレッド | CLI 入力または `/from_human` キュー処理・緊急停止検出・ADK Runner（asyncio） |
 | ROS2スレッド | `rclpy.spin()`、`/from_human` callback、`/to_human` publish、cmd_vel publisher |
-| Watchdogスレッド | 無通信タイムアウト監視（daemon=True） |
 
 **共有状態の保護：**
 
 | 変数 | 保護方法 |
 |---|---|
-| `current_twist` | `threading.Lock` で read/write を保護 |
+| `_twist` | `threading.Lock` で read/write を保護 |
 | `last_command_time` | `threading.Lock` で保護 |
 | `stop_event` | `threading.Event`（スレッドセーフ） |
 | `shutdown_event` | `threading.Event`（スレッドセーフ） |
@@ -476,7 +513,7 @@ sequenceDiagram
 ```mermaid
 stateDiagram-v2
     [*] --> 未セット
-    未セット --> セット済み : 緊急停止キーワード受信 / Watchdog
+    未セット --> セット済み : 緊急停止キーワード受信
     セット済み --> 未セット : 次のコマンド処理開始時に clear（_process_user_input の先頭）
     セット済み --> [*] : プログラム終了
 ```
@@ -488,7 +525,6 @@ stateDiagram-v2
 ```mermaid
 flowchart LR
     A["Ctrl+C"] --> B["shutdown_event.set()"]
-    B --> C["Watchdog スレッド終了\ndaemon=True"]
     B --> D["ADK Runner キャンセル"]
     D --> E["rclpy.shutdown()"]
     E --> F["ROS2 スレッド終了"]
@@ -533,18 +569,19 @@ susumu_agent/
 │   ├── turtlesim_debug.launch.py
 │   ├── turtlesim_demo.launch.py
 │   └── turtlesim_demo_debug.launch.py
-├── tests/
-│   ├── unit/                 # ROS2 不要の単体テスト（pytest）
-│   ├── mock/                 # MockRobot 使用（未実装）
-│   └── golden/               # 実 LLM・週1回（未実装）
+├── tests/                    # ROS2 不要の pytest
+│   ├── test_capabilities.py
+│   ├── test_debug_tools.py
+│   ├── test_movement_expressions.py
+│   └── test_tools_sequence_state.py
 └── susumu_agent/
     ├── business/             # ビジネスロジック中核（ROS2・ADK 依存ゼロ）
     │   ├── capabilities.py   # RobotCapabilities（速度定数・キーワード）
-    │   ├── shared_state.py   # SharedState シングルトン
-    │   └── watchdog.py       # Watchdog
+    │   ├── movement_expressions.py # 表現カタログ・direct path 解釈・golden ケース
+    │   └── shared_state.py   # SharedState シングルトン
     ├── agent/                # LLM エージェント層
     │   ├── factory.py        # AgentFactory / LlmAgent 定義
-    │   ├── tools.py          # RobotTools（8ツール実装）
+    │   ├── tools.py          # RobotTools（9ツール実装）
     │   └── prompt.py         # build_system_prompt()
     ├── storage/              # 永続化層
     │   ├── session_store.py  # SessionStore
@@ -560,7 +597,7 @@ susumu_agent/
     │   └── recorder.py       # TurtlesimRecorder（ffmpeg x11grab）
     ├── cli/                  # CLIエントリポイント
     │   ├── main.py           # 入力ループ・緊急停止・フィードバック表示
-    │   └── debug_tools.py    # DebugRunner（LLM なし直接テスト CLI）
+    │   └── debug_tools.py    # DebugRunner（direct path 解釈確認・LLM なし直接テスト CLI）
     ├── voice/                # 音声 I/F（抽象クラスのみ）
     │   ├── recognizer.py     # BaseSpeechRecognizer 抽象クラス
     │   └── synthesizer.py    # BaseSynthesizer 抽象クラス
@@ -819,7 +856,12 @@ ros2 launch susumu_agent mock_debug.launch.py
 ros2 launch susumu_agent real_debug.launch.py
 ros2 launch susumu_agent turtlesim_demo_debug.launch.py
 
-# LLM なしでツールを直接テスト
+# LLM なしで自然言語の direct path 解釈を確認
+python3 -m susumu_agent.cli.debug_tools parse "一メートル進んで"
+python3 -m susumu_agent.cli.debug_tools parse "逆方向" \
+  --last-command '{"tool":"move_robot","direction":"forward","speed":"medium","duration_sec":2.0}'
+
+# LLM なしでツールを直接実行
 python3 -m susumu_agent.cli.debug_tools move forward medium 2.0
 python3 -m susumu_agent.cli.debug_tools rotate 90 medium
 python3 -m susumu_agent.cli.debug_tools sequence square
@@ -896,14 +938,14 @@ ros2 launch susumu_agent turtlesim_demo_debug.launch.py debug_dir:=/tmp/mydbg
 
 ```mermaid
 flowchart LR
-    A["Layer 1\nPython のみ"] --> B["Layer 2\nLLM モック"] --> C["Layer 3\n実 Vertex AI"]
+    A["Layer 1\nPython のみ"] --> B["Layer 2\nADK/LLM 統合"] --> C["Layer 3\n実機/ROS2"]
 ```
 
 | レイヤー | 環境 | テスト内容 | 頻度 |
 |---|---|---|---|
-| Layer 1 | Python のみ（ROS2 不要） | 速度マッピング・duration 計算・clamp・バリデーション | PR 毎 |
-| Layer 2 | Python + LLM モック | ツール呼び出し名・report_unsupported 判定 | PR 毎 |
-| Layer 3 | 実 Vertex AI | 20種の代表的な指示でゴールデンテスト | 週1回 |
+| Layer 1 | Python のみ（ROS2 不要） | 速度マッピング・duration 計算・clamp・MovementInterpreter golden・debug CLI | PR 毎 |
+| Layer 2 | Python + ADK/LLM | fallback 経路・observe・macro・report_unsupported 判定 | 必要時 |
+| Layer 3 | ROS2 / 実機 / turtlesim | `/cmd_vel` 型・topic I/O・デモ録画 | リリース前 |
 
 **必須テストケース（Layer 1）：**
 
@@ -912,10 +954,14 @@ flowchart LR
 | 速度マッピング | low=0.1 / medium=0.3 / high=0.5 |
 | 旋回計算 | 90°・180°・360° の duration 精度 |
 | clamp | duration=99→30.0 / angle=720→360.0 |
+| 移動表現 golden | 追加表現が期待 tool / args に変換されること |
+| 文脈参照 | もう一回・逆方向・速度変更が `last_command` から正しく変換されること |
+| CLI parse | `debug_tools parse` が JSON で direct/fallback を返すこと |
 
 ```bash
 pytest                                              # 全テスト
 pytest tests/test_capabilities.py -v               # capabilities のみ
+pytest tests/test_movement_expressions.py -v       # direct path golden のみ
 ```
 
 ---
@@ -923,8 +969,9 @@ pytest tests/test_capabilities.py -v               # capabilities のみ
 ### 5.5 モデル更新フロー
 
 1. 新モデル文字列を `config-staging.yaml` に設定
-2. Layer 3 ゴールデンテスト（`tests/golden/run_golden.py`）を実行
-3. 全件パスで `config.yaml` に反映。失敗時はプロンプト調整またはロールバック
+2. direct path の `pytest` を実行し、LLM に依存しない移動表現の基準が維持されていることを確認する
+3. ADK/LLM を使う fallback 経路（observe、macro、unsupported など）を代表入力で確認する
+4. 全件パスで `config.yaml` に反映。失敗時はプロンプト調整またはロールバック
 
 モデル文字列は `config.yaml` の `llm.model` のみで管理する。
 
