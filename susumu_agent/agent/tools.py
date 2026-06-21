@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import copy
 from collections.abc import Callable
 from typing import Literal
 
@@ -185,11 +184,9 @@ class RobotTools:
         state = get_state()
         total = len(steps)
         completed = 0
-        sequence_command = {"tool": "execute_sequence", "steps": copy.deepcopy(steps), "loop": loop}
         msg = f"execute_sequence(total_steps={total}, loop={loop})"
         logger.info(f"[tool] {msg}")
         self._tool_call_log.append(msg)
-        state.last_command = sequence_command
         self._session_store.append_command_log({"event": "tool_call", "tool": "execute_sequence",
                                                 "total_steps": total, "loop": loop})
         self._emit({"type": "tool_start", "tool": "execute_sequence", "total_steps": total, "loop": loop})
@@ -198,7 +195,6 @@ class RobotTools:
             for step in steps:
                 if state.stop_event.is_set():
                     logger.info(f"[tool] execute_sequence 中断（{completed} ステップ完了）")
-                    state.last_command = sequence_command
                     self._emit({"type": "tool_done", "tool": "execute_sequence", "status": "interrupted",
                                 "completed_steps": completed, "total": total})
                     return {"status": "interrupted", "completed_steps": completed, "total": total}
@@ -225,7 +221,6 @@ class RobotTools:
                 completed += 1
             if not loop:
                 break
-        state.last_command = sequence_command
         self._emit({"type": "tool_done", "tool": "execute_sequence", "status": "ok",
                     "completed_steps": completed, "total": total})
         return {"status": "ok", "completed_steps": completed, "total": total}

@@ -36,11 +36,9 @@ class RobotCapabilities:
 
     SPEED_KEYWORDS: ClassVar[SpeedKeywordMap] = {
         "low":  ["ゆっくり", "ゆったり", "ちょっとずつ", "ちょい", "そろそろ",
-                 "のんびり", "少し", "慎重に", "静かに", "じわじわ", "ゆるやかに",
-                 "slowly", "slow", "gently", "carefully"],
-        "medium": ["普通", "通常", "普通の速さ", "標準", "そのまま", "medium", "normal"],
+                 "のんびり", "少し", "slowly", "gently", "carefully"],
         "high": ["素早く", "速く", "ダッシュ", "全力", "急いで", "全速力",
-                 "一気に", "思い切り", "全開", "fast", "quickly", "quick", "rush"],
+                 "fast", "quickly", "rush"],
     }
 
     @classmethod

@@ -10,8 +10,8 @@ class SessionStore:
     _MAX_TURNS = 5
     _SESSION_TTL_SEC = 86400
 
-    def __init__(self, session_file: Path | None = None) -> None:
-        self._session_file = session_file or Path.home() / ".susumu_agent" / "session_history.jsonl"
+    def __init__(self, session_file: Path = Path.home() / ".susumu_agent" / "session_history.jsonl") -> None:
+        self._session_file = session_file
         self._command_log_path: Path | None = None
 
     def set_debug_dir(self, debug_dir: str) -> None:

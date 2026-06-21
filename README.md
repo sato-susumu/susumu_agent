@@ -4,12 +4,11 @@
 > **注意：このリポジトリは生成AIで適当に作ってます。**
 
 自然言語（日本語・英語）でロボットを制御するシステム。  
-明確な移動表現は `MovementInterpreter` が LLM なしで高速に解釈し、曖昧な指示やカメラ確認などは Google ADK + Gemini（または Claude on Vertex AI）へフォールバックして ROS2 `/cmd_vel` コマンドに変換する。
+Google ADK + Gemini（または Claude on Vertex AI）が音声・テキストの指示を ROS2 `/cmd_vel` コマンドに変換する。
 
 ![デモ](docs/demo.gif)
 
-設計・アーキテクチャの詳細は [Design.md](docs/Design.md) を参照。  
-移動表現拡張の方針・評価基準・実装結果は [MovementExpressions.md](docs/MovementExpressions.md) を参照。
+設計・アーキテクチャの詳細は [Design.md](docs/Design.md) を参照。
 
 ---
 
@@ -18,7 +17,6 @@
 - [セットアップ](#セットアップ)
 - [launch ファイル一覧](#launch-ファイル一覧)
 - [コマンド例](#コマンド例)
-- [デバッグ](#デバッグ)
 - [テスト](#テスト)
 - [ライセンス](#ライセンス)
 
@@ -131,23 +129,16 @@ ros2 topic echo /to_human
 
 | 入力例 | 動作 |
 |---|---|
-| `ゆっくり前進` | 0.1 m/s でストップ指示まで前進 |
-| `素早く前進` | 0.5 m/s でストップ指示まで前進 |
+| `ゆっくり前進` | 0.1 m/s で 2 秒前進 |
+| `素早く前進` | 0.5 m/s で 2 秒前進 |
 | `3秒前進して` | 0.3 m/s で 3 秒前進 |
-| `1メートル進んで` / `一メートル進んで` | 距離から時間を自動計算して前進 |
-| `五十センチ前進して` | 距離から時間を自動計算して前進 |
-| `後退` | 0.3 m/s でストップ指示まで後退 |
+| `1メートル進んで` | 距離から時間を自動計算して前進 |
+| `後退` | 0.3 m/s で 2 秒後退 |
 | `右向いて` | 右に 90 度旋回 |
 | `左向いて` | 左に 90 度旋回 |
-| `180度回転して` / `百八十度回転して` | その場で 180 度旋回 |
-| `右カーブしながら前進して` | 前進しながら右カーブ |
-| `円を描いて` | カーブ走行 |
-| `ジグザグに進んで` | 左右カーブのシーケンスを継続 |
+| `180度回転して` | その場で 180 度旋回 |
 | `三角形を描いて` | 前進 → 120 度旋回 を 3 回繰り返す |
 | `四角形を描いて` | 前進 → 90 度旋回 を 4 回繰り返す |
-| `もう一回` | 直前コマンドを再実行 |
-| `さっきより速く` | 直前コマンドの速度を1段階上げて実行 |
-| `逆方向` | 直前コマンドの direction / turn / angle を反転 |
 | `何が見える？` | カメラで前方を確認（実機モードのみ有効） |
 | `状態確認` | 現在の移動状態を確認 |
 | `ヘルプ` | 使い方を表示 |
@@ -155,31 +146,10 @@ ros2 topic echo /to_human
 
 ---
 
-## デバッグ
-
-LLM を使わず、自然言語が direct path でどう解釈されるかだけを確認できる。
-
-```bash
-python3 -m susumu_agent.cli.debug_tools parse "一メートル進んで"
-python3 -m susumu_agent.cli.debug_tools parse "逆方向" \
-  --last-command '{"tool":"move_robot","direction":"forward","speed":"medium","duration_sec":2.0}'
-```
-
-ロボットを直接動かす場合は従来どおり `move` / `rotate` / `sequence` を使う。
-
-```bash
-python3 -m susumu_agent.cli.debug_tools move forward medium 2.0
-python3 -m susumu_agent.cli.debug_tools rotate 90 medium
-python3 -m susumu_agent.cli.debug_tools sequence square
-```
-
----
-
 ## テスト
 
 ```bash
 pytest
-ruff check .
 ```
 
 ---
